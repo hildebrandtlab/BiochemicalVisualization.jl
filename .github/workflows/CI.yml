@@ -71,10 +71,11 @@ jobs:
             PackageSpec(path=pwd())
           ])
           Pkg.instantiate()
-      - name: Build and deploy
+      # julia-buildpkg does not like unregistered packages, so disable for now
+      #- uses: julia-actions/julia-buildpkg@v1
+      - uses: julia-actions/julia-docdeploy@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: julia --project=docs/ docs/make.jl
       - name: Run doctests
         shell: julia --project=docs --color=yes {0}
         run: |
