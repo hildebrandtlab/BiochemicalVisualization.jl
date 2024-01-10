@@ -6,7 +6,7 @@ DocMeta.setdocmeta!(BiochemicalVisualization, :DocTestSetup, :(using Biochemical
 makedocs(;
     modules=[BiochemicalVisualization],
     authors="Andreas Hildebrandt <andreas.hildebrandt@uni-mainz.de> and contributors",
-    repo="https://github.com/hildebrandtlab/BiochemicalVisualization.jl/blob/{commit}{path}#{line}",
+    repo=Remotes.GitHub("hildebrandtlab", "BiochemicalVisualization.jl"),
     sitename="BiochemicalVisualization.jl",
     format=Documenter.HTML(;
         prettyurls=get(ENV, "CI", "false") == "true",
