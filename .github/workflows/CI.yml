@@ -41,11 +41,6 @@ jobs:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v2
-      - name: Configure unregistered package deps
-        shell: julia --project=@. --color=yes {0}
-        run: |
-          using Pkg
-          Pkg.add(url="https://github.com/hildebrandtlab/BiochemicalAlgorithms.jl")
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
   docs:
@@ -67,13 +62,9 @@ jobs:
         shell: julia --project=docs --color=yes {0}
         run: |
           using Pkg
-          Pkg.develop([
-            PackageSpec(url="https://github.com/hildebrandtlab/BiochemicalAlgorithms.jl"),
-            PackageSpec(path=pwd())
-          ])
+          Pkg.develop(PackageSpec(path=pwd()))
           Pkg.instantiate()
-      # julia-buildpkg does not like unregistered packages, so disable for now
-      #- uses: julia-actions/julia-buildpkg@v1
+      - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-docdeploy@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
