@@ -1,4 +1,7 @@
-export element_color, ball_and_stick, stick, van_der_waals
+export
+    ball_and_stick,
+    stick,
+    van_der_waals
 
 const VISUALIZE = ES6Module(asset_path("visualize_structure.js"))::Asset
 
@@ -18,7 +21,7 @@ const ELEMENT_COLORS = [
 	(175, 226, 244),   # NEON 10
 	(170,  93, 242),   # SODIUM 11
 	(137, 255, 000),   # MAGNESIUM 12
-	(209, 165, 165),   # ALUMINIUM 13    
+	(209, 165, 165),   # ALUMINIUM 13
 	(128, 154, 154),   # SILICON 14
 	(255, 128, 000),   # PHOSPHORUS 15
 	(255, 200,  40),   # SULPHUR 16
@@ -36,7 +39,7 @@ const ELEMENT_COLORS = [
 	( 93, 109, 255),   # COBALT 27
 	( 93, 123, 195),   # NICKEL 28
 	(255, 123,  98),   # COPPER 29
-	#30                  
+	#30
 	(124, 128, 175),   # ZINC 30
 	(195, 144, 144),   # GALLIUM 31
 	(102, 144, 144),   # GERMANIUM 32
@@ -52,7 +55,7 @@ const ELEMENT_COLORS = [
 	(116, 195, 203),   # NIOBIUM 41
 	( 84, 181, 182),   # MOLYBDENUM 42
 	( 59, 158, 168),   # TECHNETIUM 43
-	( 35, 142, 151),   # RUTHENIUM 44  
+	( 35, 142, 151),   # RUTHENIUM 44
 	( 10, 124, 140),   # RHODIUM 45
 	(000, 105, 133),   # PALLADIUM 46
 	(153, 198, 255),   # SILVER 47
@@ -68,7 +71,7 @@ const ELEMENT_COLORS = [
 	(  0, 203,   0),   # BARIUM 56
 	(112, 221, 255),   # LANTHANUM 57
 	(255, 255, 255),   # CERIUM 58   -----
-	(255, 255, 255),   # PRASEODYMIUM 59          
+	(255, 255, 255),   # PRASEODYMIUM 59
 	#60
 	(255, 255, 255),   # NEODYMIUM 60
 	(255, 255, 255),   # PROMETHIUM 61
@@ -85,7 +88,7 @@ const ELEMENT_COLORS = [
 	(255, 255, 255),   # LUTETIUM 71
 	( 77, 193, 255),   # HAFNIUM 72
 	( 77, 167, 255),   # TANTALUM 73
-	( 38, 147, 214),   # TUNGSTEN 74         
+	( 38, 147, 214),   # TUNGSTEN 74
 	( 38, 126, 172),   # RHENIUM 75
 	( 38, 103, 151),   # OSMIUM 76
 	( 24,  84, 135),   # IRIDIUM 77
@@ -100,7 +103,7 @@ const ELEMENT_COLORS = [
 	(117,  79,  68),   # ASTATINE 85
 	( 66, 131, 151),   # RADON 86
 	( 66,   0, 102),   # FRANCIUM 87
-	(  0, 124,   0),   # RADIUM 88       
+	(  0, 124,   0),   # RADIUM 88
 	(112, 170, 251),   # ACTINIUM 89
 	#90
 	(255, 255, 255),   # THORIUM 90
@@ -117,7 +120,7 @@ const ELEMENT_COLORS = [
 	(255, 255, 255),   # FERMIUM 100
 	(255, 255, 255),   # MENDELEVIUM 101
 	(255, 255, 255),   # NOBELIUM 102
-	(255, 255, 255),   # LAWRENCIUM 103        
+	(255, 255, 255),   # LAWRENCIUM 103
 	(255, 255, 255),   # RUTHERFORDIUM 104
 	(255, 255, 255),   # HAHNIUM 105
 	(255, 255, 255),   # SEABORGIUM 106
@@ -155,7 +158,7 @@ function display_model(ac::Union{AbstractAtomContainer, Observable{<:AbstractAto
 	else
 		nothing, prepare_model(ac; type=type)
 	end
-	
+
 	if isnothing(r)
 		return
 	end
@@ -174,7 +177,7 @@ function display_model(ac::Union{AbstractAtomContainer, Observable{<:AbstractAto
 					let controls = VISUALIZE.setupControls($focus_point);
 
 					VISUALIZE.render();
-					
+
 				})
 			}
 		""")
