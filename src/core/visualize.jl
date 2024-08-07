@@ -197,6 +197,25 @@ function display_model(ac::Union{AbstractAtomContainer, Observable{<:AbstractAto
 
 end
 
+"""
+    ball_and_stick(::AbstractAtomContainer)
+
+Creates and displays a ball-and-stick representation for the given atom container.
+"""
 ball_and_stick(ac) = display_model(ac; type="BALL_AND_STICK")
+
+"""
+    stick(::AbstractAtomContainer)
+
+Creates and displays a stick representation for the given atom container.
+"""
 stick(ac)          = display_model(ac; type="STICK")
+
+"""
+    van_der_waals(::AbstractAtomContainer)
+
+Creates and displays a van-der-Waals representation for the given atom container.
+Sphere radii generally depend on the `radius` field of the corresponding atoms but
+are at least 1 Å.
+"""
 van_der_waals(ac)  = display_model(ac; type="VAN_DER_WAALS")
