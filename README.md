@@ -28,6 +28,7 @@ build_bonds!(sys, fdb)
 # Visualize using ball-and-stick representation
 ball_and_stick(sys)
 ```
+![Ball-and-stick representation of a simple molecule](https://raw.githubusercontent.com/hildebrandtlab/BiochemicalVisualization.jl/develop/docs/src/tutorials/gfx/ball-and-stick.png)
 
 # Contributing
 You have ideas for improvements, criticism, or ran into problems?  You are looking for a feature that you know from BALL?
