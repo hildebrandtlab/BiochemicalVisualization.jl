@@ -1,5 +1,3 @@
-using BiochemicalVisualization
-using Test
+using TestItemRunner
 
-@testset "BiochemicalVisualization.jl" begin
-end
+@run_package_tests verbose=true
