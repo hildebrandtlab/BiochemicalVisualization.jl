@@ -2,9 +2,9 @@ module BiochemicalVisualization
 
 using BiochemicalAlgorithms
 
+using Bonito
 using Colors
 using GeometryBasics
-using JSServe
 using LinearAlgebra
 using MsgPack
 using Statistics

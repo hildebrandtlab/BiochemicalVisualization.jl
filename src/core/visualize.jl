@@ -166,8 +166,8 @@ function display_model(ac::Union{AbstractAtomContainer, Observable{<:AbstractAto
 	# compute the center of mass of the geometry
 	focus_point = mean(center.(r.primitives))
 
-	app = App() do session, request
-		JSServe.onload(session, dom, js"""
+	App() do session::Session
+		Bonito.onload(session, dom, js"""
 			function (container){
 				$(VISUALIZE).then(VISUALIZE => {
 					VISUALIZE.setup(container, $width, $height);
@@ -183,7 +183,7 @@ function display_model(ac::Union{AbstractAtomContainer, Observable{<:AbstractAto
 		""")
 
 		if ac isa Observable
-			on(r -> JSServe.evaljs(session, js"""
+			on(r -> Bonito.evaljs(session, js"""
 				$(VISUALIZE).then(
 					VISUALIZE => {
 						VISUALIZE.updateRepresentation(0, $r)
@@ -192,9 +192,8 @@ function display_model(ac::Union{AbstractAtomContainer, Observable{<:AbstractAto
 				)"""), session, or)
 		end
 
-		return dom
+		Bonito.record_states(session, dom)
 	end
-
 end
 
 """
