@@ -9,7 +9,8 @@ struct Representation{T <: Real}
     end
 end
 
-MsgPack.msgpack_type(::Type{Cylinder3{T}})      where {T} = MsgPack.StructType()
+# defined in compat.jl
+# MsgPack.msgpack_type(::Type{Cylinder{T}})       where {T} = MsgPack.StructType()
 MsgPack.msgpack_type(::Type{Sphere{T}})         where {T} = MsgPack.StructType()
 MsgPack.msgpack_type(::Type{Representation{T}}) where {T} = MsgPack.StructType()
 
