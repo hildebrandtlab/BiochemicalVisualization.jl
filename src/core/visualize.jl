@@ -176,7 +176,7 @@ function display_model(ac::Union{AbstractAtomContainer, Observable{<:AbstractAto
 
 					let controls = VISUALIZE.setupControls($focus_point);
 
-					VISUALIZE.render();
+					VISUALIZE.animate();
 
 				})
 			}
@@ -187,7 +187,7 @@ function display_model(ac::Union{AbstractAtomContainer, Observable{<:AbstractAto
 				$(VISUALIZE).then(
 					VISUALIZE => {
 						VISUALIZE.updateRepresentation(0, $r)
-						VISUALIZE.render()
+						VISUALIZE.animate()
 					}
 				)"""), session, or)
 		end

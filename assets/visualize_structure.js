@@ -4,7 +4,7 @@ import {
     CylinderGeometry, Quaternion
 } from "./three.module.js";
 
-import { OrbitControls } from "./OrbitControls.js"
+import { TrackballControls } from "./TrackballControls.js"
 
 let geometries = []
 let scene = null
@@ -110,22 +110,27 @@ function createCylinder(s_i, m_i, r) {
 }
 
 function setupControls(focus_point) {
-    controls = new OrbitControls( camera, renderer.domElement );
-    //controls.listenToKeyEvents( window ); // optional
-        
-    controls.enableDamping = true; // an animation loop is required when either damping or auto-rotation are enabled
-    controls.dampingFactor = 0.05;
+    controls = new TrackballControls(camera, renderer.domElement);
 
-    controls.screenSpacePanning = true;
+    // Adjust the speed of interactions
+    controls.rotateSpeed = 5.0;      
+    controls.zoomSpeed = 1.2;       
+    controls.panSpeed =0.8;
 
-    controls.minDistance = 0;
-    controls.maxDistance = 500;
+    controls.noZoom = false;        // Allow zooming
+    controls.noPan = false;         
 
-    controls.maxPolarAngle = Math.PI / 2;
+    controls.staticMoving = false;  // If true, no inertia for controls
+    controls.dynamicDampingFactor = 0.3; // Smooth motion when moving controls
 
-    controls.target = new Vector3(focus_point[0], focus_point[1], focus_point[2]);
-    
-    controls.addEventListener( 'change', render ); // call this only in static scenes (i.e., if there is no animation loop)
+    // Set the target focus point for the controls
+    controls.target.set(focus_point[0], focus_point[1], focus_point[2]);
+
+    // Update control after setup so that the focus point is correct
+    controls.update();
+
+    // Optional: Add event listener to re-render on interaction (for static scenes)
+    controls.addEventListener('change', render);
 }
 
 function render() {
