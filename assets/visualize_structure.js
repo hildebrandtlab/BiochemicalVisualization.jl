@@ -159,14 +159,15 @@ function onClick(event) {
     
     if (intersects.length > 0) {
         const clickedAtom = intersects[0].object;
-    
-        if (highlightedAtom) {
-            highlightedAtom.material.emissive.set(0x000000); // Reset emissive color
-        }
+        if (clickedAtom.geometry instanceof SphereGeometry){  // only make atoms clickable not bonds. 
+            if (highlightedAtom) {
+                highlightedAtom.material.emissive.set(0x000000); // Reset emissive color
+            }
 
-         // Highlight the clicked atom
-        clickedAtom.material.emissive.set(0xffff00); // Glowing effect (yellow)
-        highlightedAtom = clickedAtom; // Update the currently highlighted atom
+             // Highlight the clicked atom
+            clickedAtom.material.emissive.set(0xffff00); // Glowing effect (yellow)
+            highlightedAtom = clickedAtom; // Update the currently highlighted atom
+        }
     }
     
     // reset if background is clicked

@@ -22594,11 +22594,13 @@ function onClick(event) {
     const intersects = raycaster.intersectObjects(scene.children, true);
     if (intersects.length > 0) {
         const clickedAtom = intersects[0].object;
-        if (highlightedAtom) {
-            highlightedAtom.material.emissive.set(0x000000);
+        if (clickedAtom.geometry instanceof SphereGeometry) {
+            if (highlightedAtom) {
+                highlightedAtom.material.emissive.set(0x000000);
+            }
+            clickedAtom.material.emissive.set(0xffff00);
+            highlightedAtom = clickedAtom;
         }
-        clickedAtom.material.emissive.set(0xffff00);
-        highlightedAtom = clickedAtom;
     }
     if (intersects.length === 0 && highlightedAtom) {
         highlightedAtom.material.emissive.set(0x000000);
