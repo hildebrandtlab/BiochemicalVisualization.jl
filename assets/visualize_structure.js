@@ -1,7 +1,7 @@
 import { 
     WebGLRenderer, Scene, PerspectiveCamera, SphereGeometry,
     Mesh, MeshPhongMaterial, AmbientLight, PointLight, Vector3,
-    CylinderGeometry, Quaternion
+    CylinderGeometry, Quaternion, Raycaster, Vector2
 } from "./three.module.js";
 
 import { TrackballControls } from "./TrackballControls.js"
@@ -12,14 +12,19 @@ let renderer = null
 let camera = null
 let controls = null
 
+let highlightedAtom = null;
+
 function setup(container, width, height) {
     renderer = new WebGLRenderer({antialias: true});
     renderer.setSize(width, height);
     renderer.setClearColor("#000000");
     container.appendChild(renderer.domElement);
-
+    
+    // Listen for mouse move events
+    renderer.domElement.addEventListener('mousedown', onClick, false);
+    
     camera = new PerspectiveCamera(75, width / height, 0.1, 1000);
-    camera.position.z = 4;
+    camera.position.z = 5;
 
     var ambientLight = new AmbientLight(0xcccccc, 0.4);
     var pointLight = new PointLight(0xffffff, 0.8);
@@ -133,13 +138,53 @@ function setupControls(focus_point) {
     controls.addEventListener('change', render);
 }
 
+
+// Function to update mouse position (normalized device coordinates)
+function onClick(event) {
+    // set the correct perspective to interpolate the correct coordinates
+    const rect = renderer.domElement.getBoundingClientRect();
+    
+    // get mouse coords
+    const mouse = new Vector2();
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+ 
+    // Raycasting setup to detect mouse click
+    const raycaster = new Raycaster();
+    // Update the raycaster with the current mouse position
+    raycaster.setFromCamera(mouse, camera);
+    
+    // Perform intersection test
+    const intersects = raycaster.intersectObjects(scene.children, true);
+    
+    if (intersects.length > 0) {
+        const clickedAtom = intersects[0].object;
+    
+        if (highlightedAtom) {
+            highlightedAtom.material.emissive.set(0x000000); // Reset emissive color
+        }
+
+         // Highlight the clicked atom
+        clickedAtom.material.emissive.set(0xffff00); // Glowing effect (yellow)
+        highlightedAtom = clickedAtom; // Update the currently highlighted atom
+    }
+    
+    // reset if background is clicked
+    if (intersects.length === 0 && highlightedAtom) {
+    highlightedAtom.material.emissive.set(0x000000);
+    highlightedAtom = null;
+    }
+}
+
+
 function render() {
     renderer.render(scene, camera)
 }
-	
+
+
 function animate() {         
     requestAnimationFrame( animate );                  
-    controls.update(); // only required if controls.enableDamping = true, or if controls.autoRotate = true              
+    controls.update();              
     render();
 }
 
