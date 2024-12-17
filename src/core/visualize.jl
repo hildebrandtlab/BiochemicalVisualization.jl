@@ -147,11 +147,12 @@ function prepare_model(ac::AbstractAtomContainer; type="BALL_AND_STICK")
 
 	return nothing
 end
+        
 
 function display_model(ac::Union{AbstractAtomContainer, Observable{<:AbstractAtomContainer}}; type="BALL_AND_STICK")
 	width = 500; height = 500
-	dom = DOM.div(width = width, height = height)
-
+    md_dom = DOM.div(width = width, height = height)
+           
 	or, r = if ac isa Observable
 		or = map(a -> prepare_model(a; type=type), ac)
 		or, or.val
@@ -165,9 +166,9 @@ function display_model(ac::Union{AbstractAtomContainer, Observable{<:AbstractAto
 
 	# compute the center of mass of the geometry
 	focus_point = mean(center.(r.primitives))
-
+   
 	App() do session::Session
-		Bonito.onload(session, dom, js"""
+		Bonito.onload(session, md_dom, js"""
 			function (container){
 				$(VISUALIZE).then(VISUALIZE => {
 					VISUALIZE.setup(container, $width, $height);
@@ -175,13 +176,13 @@ function display_model(ac::Union{AbstractAtomContainer, Observable{<:AbstractAto
 					VISUALIZE.addRepresentation($r)
 
 					let controls = VISUALIZE.setupControls($focus_point);
-
+           
 					VISUALIZE.animate();
-
+                    
 				})
 			}
 		""")
-
+                    
 		if ac isa Observable
 			on(r -> Bonito.evaljs(session, js"""
 				$(VISUALIZE).then(
@@ -190,10 +191,23 @@ function display_model(ac::Union{AbstractAtomContainer, Observable{<:AbstractAto
 						VISUALIZE.animate()
 					}
 				)"""), session, or)
+           
 		end
-
+        
+        slider_div = DOM.div(
+            style = "border: 1px solid black; padding: 10px;",
+            Slider(1:3)  # Create the slider inside this div
+        )
+   
+                        
+        dom = DOM.div(
+                    slider_div, 
+                    md_dom
+                    )
+        display(dom)
 		Bonito.record_states(session, dom)
 	end
+    
 end
 
 """

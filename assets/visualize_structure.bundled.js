@@ -22600,6 +22600,8 @@ function onClick(event) {
             }
             clickedAtom.material.emissive.set(0xffff00);
             highlightedAtom = clickedAtom;
+            const index = scene.children.indexOf(clickedAtom);
+            index;
         }
     }
     if (intersects.length === 0 && highlightedAtom) {

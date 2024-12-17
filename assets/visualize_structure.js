@@ -12,7 +12,13 @@ let renderer = null
 let camera = null
 let controls = null
 
-let highlightedAtom = null;
+let highlightedAtom = null
+let highlightedAtom_id = 0;
+
+function gethighlightedAtom_id() {
+    return highlightedAtom_id;
+}
+
 
 function setup(container, width, height) {
     renderer = new WebGLRenderer({antialias: true});
@@ -167,13 +173,16 @@ function onClick(event) {
              // Highlight the clicked atom
             clickedAtom.material.emissive.set(0xffff00); // Glowing effect (yellow)
             highlightedAtom = clickedAtom; // Update the currently highlighted atom
+            // find index of intersected Object in children
+            const index = scene.children.indexOf(clickedAtom);
+            highlightedAtom_id = index; 
         }
     }
     
     // reset if background is clicked
     if (intersects.length === 0 && highlightedAtom) {
-    highlightedAtom.material.emissive.set(0x000000);
-    highlightedAtom = null;
+        highlightedAtom.material.emissive.set(0x000000);
+        highlightedAtom = null;
     }
 }
 
