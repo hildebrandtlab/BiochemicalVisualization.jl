@@ -1,0 +1,3 @@
+# ignore downloaded PDB files
+res/models/pdb/
+
