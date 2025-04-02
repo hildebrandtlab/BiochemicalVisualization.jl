@@ -14,6 +14,7 @@ import GeometryBasics: Sphere, Cylinder
 asset_path(parts...) = normpath(joinpath(@__DIR__, "..", "assets", parts...))
 
 include("compat.jl")
+include("core/element_colors.jl")
 include("core/representation.jl")
 include("core/visualize.jl")
 

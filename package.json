@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@babylonjs/gui": "^7.54.0"
+  }
+}

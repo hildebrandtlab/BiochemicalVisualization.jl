@@ -1,0 +1,32 @@
+{
+  "name": "biochemicalvisualization",
+  "version": "0.1.0",
+  "description": "Support library for BiochemicalVisualization.jl",
+  "type": "module",
+  "scripts": {
+    "build": "rollup -c"
+  },
+  "author": "Andreas Hildebrandt",
+  "license": "MIT",
+  "devDependencies": {
+    "@rollup/plugin-replace": "^6.0.2",
+    "@types/node": "^22.13.16",
+    "@types/react": "^19.0.12",
+    "@types/react-dom": "^19.0.4",
+    "typescript": "^5.8.2"
+  },
+  "dependencies": {
+    "@babylonjs/core": "^8.0.2",
+    "@babylonjs/gui": "^8.0.2",
+    "@babylonjs/inspector": "^8.0.2",
+    "@r2wc/react-to-web-component": "^2.0.4",
+    "@rollup/plugin-commonjs": "^28.0.3",
+    "@rollup/plugin-node-resolve": "^16.0.1",
+    "@webcomponents/custom-elements": "^1.6.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "rollup": "^4.38.0",
+    "rollup-plugin-typescript2": "^0.36.0",
+    "webxr-polyfill": "^2.0.3"
+  }
+}

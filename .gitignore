@@ -5,4 +5,4 @@
 /.vscode/
 /docs/build/
 Manifest.toml
-assets/node_modules/*
+**/node_modules/*

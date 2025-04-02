@@ -1,11 +1,13 @@
 struct Representation{T <: Real}
-    primitives::AbstractVector{GeometryPrimitive{3, T}}
-    colors::AbstractVector{String}
+    primitives::Dict{String, AbstractVector{GeometryPrimitive{3, T}}}
+    meta_data::AbstractVector{AbstractVector{Union{AbstractString, Int}}}
+    colors::Dict{String, AbstractVector{AbstractString}}
 
-    function Representation{T}(
-            primitives=Vector{GeometryPrimitive{3, T}}(),
-            colors=Vector{String}()) where {T}
-        new(primitives, colors)
+    function Representation{T}(;
+            primitives=Dict{String, Vector{GeometryPrimitive{3, T}}}(),
+            meta_data=Vector{Vector{Union{String, Int}}}(),
+            colors=Dict{String, Vector{String}}()) where {T}
+        new(primitives, meta_data, colors)
     end
 end
 
