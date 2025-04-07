@@ -24,9 +24,14 @@ function prepare_model(ac::AbstractAtomContainer; type="BALL_AND_STICK")
 	return nothing
 end
 
-function display_model(ac::Union{AbstractAtomContainer, Observable{<:AbstractAtomContainer}}; type="BALL_AND_STICK")
-	width = "80dvw"; height = "80dvh"
-	dom = DOM.div(width = width, height = height)
+function display_model(
+    ac::Union{AbstractAtomContainer, Observable{<:AbstractAtomContainer}}; 
+    type="BALL_AND_STICK", 
+    width="80%", 
+    height="60%"
+)
+  dom = DOM.div(;style="width: $width; height: $height;")
+
 
 	or, r = if ac isa Observable
 		or = map(a -> prepare_model(a; type=type), ac)
@@ -43,10 +48,13 @@ function display_model(ac::Union{AbstractAtomContainer, Observable{<:AbstractAto
 	focus_point = mean(center.(vcat(values(r.primitives)...)))
 
 	App() do session::Session
-		
+
 		Bonito.onload(session, dom, js"""
       function (container){
         $(VISUALIZE).then(VISUALIZE => {
+          parent = $dom.parentNode;
+          parent.style.height = '100vh';
+
           const scene = document.createElement("bv-scene");
           scene.setAttribute("id", "bv-scene-1");
           scene.setAttribute("width", $width);
@@ -68,7 +76,7 @@ function display_model(ac::Union{AbstractAtomContainer, Observable{<:AbstractAto
 
             forwardToScene("set-focus", { focus_point: $focus_point }, scene_div);
             forwardToScene("add-representation", { representation: $r}, scene_div);
-            forwardToScene("set-render-mode", { ssao_mode: 5, debug: false }, scene_div);
+            forwardToScene("set-render-mode", { ssao_mode: 2, debug: false }, scene_div);
           });
 
           $dom.appendChild(scene);
@@ -92,24 +100,24 @@ function display_model(ac::Union{AbstractAtomContainer, Observable{<:AbstractAto
 end
 
 """
-    ball_and_stick(::AbstractAtomContainer)
+    ball_and_stick(::AbstractAtomContainer, kwargs...)
 
 Creates and displays a ball-and-stick representation for the given atom container.
 """
-ball_and_stick(ac) = display_model(ac; type="BALL_AND_STICK")
+ball_and_stick(ac; kwargs...) = display_model(ac; type="BALL_AND_STICK", kwargs...)
 
 """
-    stick(::AbstractAtomContainer)
+    stick(::AbstractAtomContainer, kwargs...)
 
 Creates and displays a stick representation for the given atom container.
 """
-stick(ac)          = display_model(ac; type="STICK")
+stick(ac; kwargs...)          = display_model(ac; type="STICK", kwargs...)
 
 """
-    van_der_waals(::AbstractAtomContainer)
+    van_der_waals(::AbstractAtomContainer, kwargs...)
 
 Creates and displays a van-der-Waals representation for the given atom container.
 Sphere radii generally depend on the `radius` field of the corresponding atoms but
 are at least 1 Å.
 """
-van_der_waals(ac)  = display_model(ac; type="VAN_DER_WAALS")
+van_der_waals(ac; kwargs...)  = display_model(ac; type="VAN_DER_WAALS", kwargs...)

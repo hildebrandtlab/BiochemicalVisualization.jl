@@ -31,6 +31,11 @@ ball_and_stick(sys)
 ```
 ![Ball-and-stick representation of a simple molecule](https://raw.githubusercontent.com/hildebrandtlab/BiochemicalVisualization.jl/develop/docs/src/tutorials/gfx/ball-and-stick.png)
 
+# Development
+
+To build the javascript bundle, cd into the `typescript` folder, then
+run `npm run build`.
+
 # Contributing
 You have ideas for improvements, criticism, or ran into problems?  You are looking for a feature that you know from BALL?
 Feedback and contributions are very welcome. Check out our [guidelines](CONTRIBUTING.md) and use our [issue tracker](https://github.com/hildebrandtlab/BiochemicalVisualization.jl/issues) or contact us [via e-mail](mailto:hildebrandtlab@uni-mainz.de?subject=BiochemicalVisualization.jl).

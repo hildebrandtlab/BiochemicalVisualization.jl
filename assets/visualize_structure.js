@@ -18,6 +18,14 @@ function setup(container, width, height) {
     renderer.setClearColor("#000000");
     container.appendChild(renderer.domElement);
 
+    var bjs_canvas = document.createElement('div');
+    bjs_canvas.setAttribute('id', 'bjs');
+
+    container.appendChild(bjs_canvas);
+
+    //var bv_test = document.createElement('bv-scene');
+    //container.appendChild(bv_test);
+
     camera = new PerspectiveCamera(75, width / height, 0.1, 1000);
     camera.position.z = 4;
 
