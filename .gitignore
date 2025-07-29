@@ -4,5 +4,5 @@
 *.jl.mem
 /.vscode/
 /docs/build/
-Manifest.toml
+Manifest*.toml
 assets/node_modules/*
