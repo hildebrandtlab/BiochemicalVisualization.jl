@@ -30,17 +30,14 @@ jobs:
       matrix:
         version:
           - 'lts'
-          - '1.11'
-          - 'pre'
+          - '1.12'
           # Upstream bug https://github.com/julia-vscode/TestItemRunner.jl/issues/113
           # - 'nightly'
         os:
           - ubuntu-latest
         arch:
           - x64
-        include:
-          - version: 'pre'
-            experimental: true
+        # include:
           # - version: 'nightly'
             # experimental: true
     steps:
