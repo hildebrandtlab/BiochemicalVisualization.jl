@@ -32,7 +32,8 @@ jobs:
           - 'lts'
           - '1.11'
           - 'pre'
-          - 'nightly'
+          # Upstream bug https://github.com/julia-vscode/TestItemRunner.jl/issues/113
+          # - 'nightly'
         os:
           - ubuntu-latest
         arch:
@@ -40,8 +41,8 @@ jobs:
         include:
           - version: 'pre'
             experimental: true
-          - version: 'nightly'
-            experimental: true
+          # - version: 'nightly'
+            # experimental: true
     steps:
       - uses: actions/checkout@v5
       - uses: julia-actions/setup-julia@v2
