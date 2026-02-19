@@ -49,6 +49,11 @@ jobs:
       - name: Run resolver.jl
         run: |
           julia --project="${RESOLVER_PATH}/bin" ${RESOLVER_PATH}/bin/resolve.jl . --min-minor=@deps --julia=${{ matrix.version }}
+      - name: Inject verbose Aqua.jl fork
+        shell: julia --project=@. {0}
+        run: |
+          using Pkg
+          Pkg.add(url="https://github.com/tkemmer/Aqua.jl", rev="tk/verbose-pt")
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
         with:
