@@ -32,15 +32,12 @@ jobs:
           - 'lts'
           - '1.12'
           - 'pre'
-          - 'nightly'
         os:
           - ubuntu-latest
         arch:
           - x64
         include:
           - version: 'pre'
-            experimental: true
-          - version: 'nightly'
             experimental: true
     steps:
       - uses: actions/checkout@v6
