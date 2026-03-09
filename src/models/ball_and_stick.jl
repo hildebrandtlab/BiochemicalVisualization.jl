@@ -6,8 +6,8 @@ function prepare_ball_and_stick_model(
     spheres = map(a -> _sphere(a.r, sphere_radius), atoms(ac))
     sphere_colors = [element_color(e) for e in atoms(ac).element]
 
-    sticks = [(atom_by_idx(ac, b.a1),
-            atom_by_idx(ac, b.a2)) for b in bonds(ac)]
+    sticks = [(atom_by_idx(parent(ac), b.a1),
+            atom_by_idx(parent(ac), b.a2)) for b in bonds(ac)]
 
     midpoints = map(s -> (s[1].r + T(0.5)*(s[2].r - s[1].r)), sticks)
 
