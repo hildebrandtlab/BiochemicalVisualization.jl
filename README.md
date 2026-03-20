@@ -5,7 +5,7 @@
 
 BiochemicalVisualization is the graphical interface for [BiochemicalAlgorithms.jl](https://github.com/hildebrandtlab/BiochemicalAlgorithms.jl), providing different representations for biomolecular systems. All representations can be visualized in the form of interactive web widgets that are embeddable in Jypyter notebooks.
 
-# Installation
+## Installation
 To install BiochemicalVisualization, open a Julia REPL, switch to the package mode by pressing `]`, and type
 
 
@@ -13,7 +13,7 @@ To install BiochemicalVisualization, open a Julia REPL, switch to the package mo
 pkg> add BiochemicalVisualization
 ```
 
-# Usage
+## Usage
 ```julia
 using BiochemicalAlgorithms, BiochemicalVisualization
 
@@ -31,7 +31,7 @@ ball_and_stick(sys)
 ```
 ![Ball-and-stick representation of a simple molecule](https://raw.githubusercontent.com/hildebrandtlab/BiochemicalVisualization.jl/develop/docs/src/tutorials/gfx/ball-and-stick.png)
 
-# Contributing
+## Contributing
 You have ideas for improvements, criticism, or ran into problems?  You are looking for a feature that you know from BALL?
 Feedback and contributions are very welcome. Check out our [guidelines](CONTRIBUTING.md) and use our [issue tracker](https://github.com/hildebrandtlab/BiochemicalVisualization.jl/issues) or contact us [via e-mail](mailto:hildebrandtlab@uni-mainz.de?subject=BiochemicalVisualization.jl).
 
