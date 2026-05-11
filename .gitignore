@@ -4,5 +4,37 @@
 *.jl.mem
 /.vscode/
 /docs/build/
-Manifest*.toml
-assets/node_modules/*
+Manifest.toml
+**/node_modules/*
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Three.js-era vendored bundles in /assets (replaced by the Babylon
+# build under typescript/dist; kept on disk for now but not tracked).
+/assets/babylon.js
+/assets/three.min.js
+/assets/three.module.js
+/assets/three.module.bundled.js
+/assets/OrbitControls.js
+/assets/OrbitControls.bundled.js
+/assets/TrackballControls.js
+/assets/TrackballControls.bundled.js
+/assets/visualize_structure.js
+/assets/visualize_structure.bundled.js
+/assets/package.json
+/assets/package-lock.json
+
+# Stale rollup-output naming — current config emits .js, not .bundled.js.
+*.bundled.js
+
+# Stray root-level node packages (real deps live in typescript/)
+/package.json
+/package-lock.json
+/node_modules/
+
+# Claude Code project-local settings
+/.claude/
+
+# Local exploration / vendored upstream sources (not part of the package)
+/tmp/
