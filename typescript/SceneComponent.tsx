@@ -18,6 +18,7 @@ import {
   WebXRFeaturesManager,
   WebXRFeatureName,
   PointerEventTypes,
+  PointerInfo,
   Color4,
 } from '@babylonjs/core';
 
@@ -29,6 +30,7 @@ import { addRepresentation } from './rendering';
 import { changeSSAOMode, SsaoCache } from './ssao';
 import { RenderStyle, applyRenderStyle } from './style';
 import { LightingMode, LIGHTING_MODES, applyLightingMode, lightingModeLabel } from './lighting';
+import { MouseMode, MOUSE_MODES, applyMouseMode, mouseModeLabel } from './mouse';
 
 type SceneComponentProps = {
   id: string;
@@ -56,6 +58,7 @@ export type AppControls = {
   setRenderStyle: (style: RenderStyle) => void,
   setModel: (model: ModelType) => void,
   setLightingMode: (mode: LightingMode) => void,
+  setMouseMode: (mode: MouseMode) => void,
   takeScreenshot: () => void,
 };
 
@@ -88,6 +91,11 @@ export type AppContext = {
   // Per-frame observer that updates light direction (used by `follow`
   // and `directional` modes); cleared when the mode changes.
   lightingObserver: Observer<Scene> | null,
+
+  mouseMode: MouseMode,
+  // Custom pointer observer used by the BALLView mouse mode; cleared
+  // when switching back to default.
+  mouseObserver: Observer<PointerInfo> | null,
 
   hudPanel: StackPanel,
   debugText: DebugText,
@@ -298,6 +306,12 @@ const setupMenuBar = (ctx: AppContext) => {
     ctx.controls?.setLightingMode(next);
   });
 
+  const mouseBtn = makeButton(mouseModeLabel(ctx.mouseMode), () => {
+    const i = MOUSE_MODES.indexOf(ctx.mouseMode);
+    const next = MOUSE_MODES[(i + 1) % MOUSE_MODES.length];
+    ctx.controls?.setMouseMode(next);
+  });
+
   makeButton("Screenshot", () => {
     ctx.controls?.takeScreenshot();
   });
@@ -359,6 +373,11 @@ const setupMenuBar = (ctx: AppContext) => {
     setLightingMode: (mode) => {
       applyLightingMode(ctx, mode);
       lightingBtn.text.text = lightingModeLabel(mode);
+    },
+
+    setMouseMode: (mode) => {
+      applyMouseMode(ctx, mode);
+      mouseBtn.text.text = mouseModeLabel(mode);
     },
 
     takeScreenshot: () => {
@@ -536,6 +555,8 @@ export const SceneComponent = (props: SceneComponentProps) => {
       directionalLight,
       lightingMode: "headlight",
       lightingObserver: null,
+      mouseMode: "default",
+      mouseObserver: null,
       hudPanel,
       debugText,
       update,
