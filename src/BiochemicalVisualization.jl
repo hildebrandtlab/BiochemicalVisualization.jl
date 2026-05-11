@@ -14,10 +14,14 @@ import GeometryBasics: Sphere, Cylinder
 asset_path(parts...) = normpath(joinpath(@__DIR__, "..", "assets", parts...))
 
 include("compat.jl")
+include("core/element_colors.jl")
+include("core/element_colors_qutemol.jl")
+include("core/element_vdw_radii.jl")
 include("core/representation.jl")
 include("core/visualize.jl")
 
 include("models/ball_and_stick.jl")
+include("models/quick_ses.jl")
 include("models/stick.jl")
 include("models/van_der_waals.jl")
 
