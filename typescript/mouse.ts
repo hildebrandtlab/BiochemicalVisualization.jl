@@ -121,8 +121,11 @@ export const applyMouseMode = (ctx: AppContext, mode: MouseMode) => {
                         Vector3.CrossToRef(right, forward, viewUp);
                         viewUp.normalize();
 
-                        Quaternion.RotationAxisToRef(viewUp, dx * ROTATE_SENS, qX);
-                        Quaternion.RotationAxisToRef(right,  dy * ROTATE_SENS, qY);
+                        Quaternion.RotationAxisToRef(viewUp,  dx * ROTATE_SENS, qX);
+                        // Negate dy: BALLView convention is that dragging
+                        // the cursor *up* (dy < 0) rotates the molecule's
+                        // top *toward* the viewer.
+                        Quaternion.RotationAxisToRef(right,  -dy * ROTATE_SENS, qY);
                         qX.multiplyToRef(qY, qCombined);
 
                         // Rotate camera offset (camera - target) around
