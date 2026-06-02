@@ -71,6 +71,32 @@ _density_level(d::AbstractString) = (d in DENSITY_LEVELS) ? String(d) :
 const _SCENE_COUNTER = Ref(0)
 _next_scene_id() = (_SCENE_COUNTER[] += 1; "bv-scene-$(_SCENE_COUNTER[])")
 
+# Bundle dedup across notebook cells. Bonito's `push_dependencies!`
+# emits per-subsession assets via `setdiff(sub.imports, root.imports)`,
+# so adding our bundle to the root session's imports causes every
+# subsequent subsession to skip re-embedding it. The browser registers
+# `BONITO_IMPORTS[hash] = import('data:...')` from the first cell that
+# does emit the bundle; later cells' JS still references the same
+# `BONITO_IMPORTS[hash]` and gets the cached promise.
+#
+# We must NOT push on the very first display in a fresh root session —
+# otherwise the setdiff strips the bundle from cell 1 too and no cell
+# ever emits it. We track the root session we last saw; if it matches,
+# we've already emitted once and can safely dedup.
+const _LAST_ROOT = Ref{Union{Nothing, Bonito.Session}}(nothing)
+
+function _maybe_dedup_visualize_asset!(session)
+    isnothing(session.parent) && return
+    root = Bonito.root_session(session)
+    if _LAST_ROOT[] !== root
+        # First display in this root session — let the bundle emit normally.
+        _LAST_ROOT[] = root
+        return
+    end
+    push!(root.imports, VISUALIZE)
+    return
+end
+
 # Centroid of the active representation, used as the camera focus.
 # Atom models supply primitives (sphere/cylinder centers); surface
 # models supply only `mesh`. Returns `nothing` for an empty
@@ -195,6 +221,7 @@ function display_model(
     scene_div_id = scene_id * "-div"
 
     App() do session::Session
+        _maybe_dedup_visualize_asset!(session)
         Bonito.onload(session, dom, js"""
             function (container){
                 $(VISUALIZE).then(VISUALIZE => {
