@@ -48,8 +48,18 @@ type DebugText = {
   drawCallsCount: TextBlock,
 };
 
-export type ModelType = "BALL_AND_STICK" | "STICK" | "VAN_DER_WAALS";
-export const MODEL_TYPES: ModelType[] = ["BALL_AND_STICK", "STICK", "VAN_DER_WAALS"];
+export type ModelType = "BALL_AND_STICK" | "STICK" | "VAN_DER_WAALS" | "SAS" | "SES";
+export const MODEL_TYPES: ModelType[] = ["BALL_AND_STICK", "STICK", "VAN_DER_WAALS", "SAS", "SES"];
+
+export type ColoringMethod = "element" | "chain" | "residue" | "residue_index" | "solid";
+export const COLORING_METHODS: ColoringMethod[] =
+  ["element", "chain", "residue", "residue_index", "solid"];
+
+// Surface triangulation density. Only used by SAS / SES models; ignored
+// elsewhere. The Julia side maps these to numeric density values that
+// it passes to `triangulate_sas` / `triangulate_ses`.
+export type DensityLevel = "low" | "medium" | "high" | "ultra";
+export const DENSITY_LEVELS: DensityLevel[] = ["low", "medium", "high", "ultra"];
 
 export type AppControls = {
   setDebug: (on: boolean) => void,
@@ -57,6 +67,8 @@ export type AppControls = {
   setSSAOMode: (mode: number) => void,
   setRenderStyle: (style: RenderStyle) => void,
   setModel: (model: ModelType) => void,
+  setColoring: (method: ColoringMethod) => void,
+  setDensity: (level: DensityLevel) => void,
   setLightingMode: (mode: LightingMode) => void,
   setMouseMode: (mode: MouseMode) => void,
   takeScreenshot: () => void,
@@ -83,6 +95,8 @@ export type AppContext = {
   debug: boolean,
   renderStyle: RenderStyle,
   activeModel: ModelType,
+  activeColoring: ColoringMethod,
+  activeDensity: DensityLevel,
 
   ambientLight: HemisphericLight,
   pointLight: PointLight,
@@ -101,6 +115,11 @@ export type AppContext = {
   debugText: DebugText,
   controls?: AppControls,
   update: (data: any) => void,
+
+  // The React-mounted outer div for *this* plot. JS→Julia request
+  // events dispatch on this node so each notebook plot only drives
+  // its own Bonito session.
+  sceneRoot: HTMLDivElement,
 };
 
 type ModalState = { open: boolean; text: string };
@@ -293,11 +312,27 @@ const setupMenuBar = (ctx: AppContext) => {
   const modelLabel = (m: ModelType) =>
     m === "BALL_AND_STICK" ? "Model: ball+stick" :
     m === "STICK"          ? "Model: stick"      :
-                             "Model: vdW";
+    m === "VAN_DER_WAALS"  ? "Model: vdW"        :
+    m === "SAS"            ? "Model: SAS"        :
+                             "Model: SES";
   const modelBtn = makeButton(modelLabel(ctx.activeModel), () => {
     const i = MODEL_TYPES.indexOf(ctx.activeModel);
     const next = MODEL_TYPES[(i + 1) % MODEL_TYPES.length];
     ctx.controls?.setModel(next);
+  });
+
+  const coloringLabel = (c: ColoringMethod) => `Color: ${c}`;
+  const coloringBtn = makeButton(coloringLabel(ctx.activeColoring), () => {
+    const i = COLORING_METHODS.indexOf(ctx.activeColoring);
+    const next = COLORING_METHODS[(i + 1) % COLORING_METHODS.length];
+    ctx.controls?.setColoring(next);
+  });
+
+  const densityLabel = (d: DensityLevel) => `Density: ${d}`;
+  const densityBtn = makeButton(densityLabel(ctx.activeDensity), () => {
+    const i = DENSITY_LEVELS.indexOf(ctx.activeDensity);
+    const next = DENSITY_LEVELS[(i + 1) % DENSITY_LEVELS.length];
+    ctx.controls?.setDensity(next);
   });
 
   const lightingBtn = makeButton(lightingModeLabel(ctx.lightingMode), () => {
@@ -365,8 +400,32 @@ const setupMenuBar = (ctx: AppContext) => {
       // add-representation event.
       ctx.activeModel = model;
       modelBtn.text.text = modelLabel(model);
-      document.dispatchEvent(new CustomEvent("bv-request-model", {
+      ctx.sceneRoot.dispatchEvent(new CustomEvent("bv-request-model", {
         detail: { type: model },
+      }));
+    },
+
+    setColoring: (method) => {
+      if (method === ctx.activeColoring) return;
+      // Same pattern as setModel: optimistic local state, Julia rebuilds
+      // and ships back via add-representation. Only meaningful for the
+      // surface models (SAS/SES) today, but harmless on atom models.
+      ctx.activeColoring = method;
+      coloringBtn.text.text = coloringLabel(method);
+      ctx.sceneRoot.dispatchEvent(new CustomEvent("bv-request-coloring", {
+        detail: { coloring: method },
+      }));
+    },
+
+    setDensity: (level) => {
+      if (level === ctx.activeDensity) return;
+      // Density only affects SAS/SES triangulation. Julia ignores the
+      // request when an atom model is active but still records the
+      // setting so a subsequent switch to SAS/SES uses it.
+      ctx.activeDensity = level;
+      densityBtn.text.text = densityLabel(level);
+      ctx.sceneRoot.dispatchEvent(new CustomEvent("bv-request-density", {
+        detail: { density: level },
       }));
     },
 
@@ -488,6 +547,12 @@ export const SceneComponent = (props: SceneComponentProps) => {
     if (data.active && MODEL_TYPES.includes(data.active)) {
       context.current.activeModel = data.active as ModelType;
     }
+    if (data.coloring && COLORING_METHODS.includes(data.coloring)) {
+      context.current.activeColoring = data.coloring as ColoringMethod;
+    }
+    if (data.density && DENSITY_LEVELS.includes(data.density)) {
+      context.current.activeDensity = data.density as DensityLevel;
+    }
     renderRepresentation(context.current, data.representation);
   };
 
@@ -515,7 +580,7 @@ export const SceneComponent = (props: SceneComponentProps) => {
   };
 
   const init = async () => {
-    if (!canvas.current) return;
+    if (!canvas.current || !webComponentRef.current) return;
 
     const engine = new Engine(canvas.current, true);
     const scene  = new Scene(engine);
@@ -550,22 +615,29 @@ export const SceneComponent = (props: SceneComponentProps) => {
       debug: false,
       renderStyle: "default",
       activeModel: "BALL_AND_STICK",
+      activeColoring: "element",
+      activeDensity: "medium",
       ambientLight,
       pointLight,
       directionalLight,
       lightingMode: "headlight",
       lightingObserver: null,
-      mouseMode: "default",
+      mouseMode: "ballview",
       mouseObserver: null,
       hudPanel,
       debugText,
       update,
+      sceneRoot: webComponentRef.current,
     };
     context.current = ctx;
 
     setupInstrumentation(ctx, engineInst, sceneInst);
     setupPicking(ctx, setModal);
     setupMenuBar(ctx);
+    // Apply the initial mouse mode so the BALLView pointer observer is
+    // actually wired up (the default mode is BALLView; flipping the
+    // string alone wouldn't attach the observer).
+    applyMouseMode(ctx, ctx.mouseMode);
 
     window.addEventListener("resize", resizeHandler);
   };

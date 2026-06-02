@@ -1,6 +1,6 @@
 import { AppContext } from "./SceneComponent";
 
-import { Vector3, Mesh, StandardMaterial, HighlightLayer, Color3, MeshBuilder, Color4, Tags, InstancedMesh, Quaternion, Space } from "@babylonjs/core";
+import { Vector3, Mesh, StandardMaterial, HighlightLayer, Color3, MeshBuilder, Color4, Tags, InstancedMesh, Quaternion, Space, VertexData } from "@babylonjs/core";
 
 
 const addRepresentation = (ctx: AppContext, data: any) => {
@@ -91,8 +91,52 @@ const renderRepresentation = (ctx: AppContext, repr: any) => {
         }
     }
 
+    // Surface (SAS / SES) representation — single triangulated mesh
+    // with per-vertex colors. Julia ships positions/normals as flat
+    // float arrays, indices as flat int32, and one hex color per vertex.
+    if (repr.mesh) {
+        const surfaceMesh = buildSurfaceMesh(ctx, repr.mesh);
+        if (surfaceMesh) meshes.children.push(surfaceMesh);
+    }
+
     return meshes;
 }
+
+const buildSurfaceMesh = (
+    ctx: AppContext,
+    md: { positions: number[]; normals: number[]; indices: number[]; vertex_colors: string[] },
+): Mesh | null => {
+    if (!md.positions || md.positions.length === 0) return null;
+
+    const surfaceMaterial = new StandardMaterial("surfaceMaterial", ctx.scene);
+    surfaceMaterial.backFaceCulling = false;  // SAS/SES are open in tight pockets
+    ctx.representationMaterials.push(surfaceMaterial);
+
+    const mesh = new Mesh("surfaceMesh", ctx.scene);
+    mesh.isPickable = false;
+    mesh.material = surfaceMaterial;
+
+    const vd = new VertexData();
+    vd.positions = new Float32Array(md.positions);
+    vd.normals   = new Float32Array(md.normals);
+    vd.indices   = new Uint32Array(md.indices);
+
+    const n = md.vertex_colors.length;
+    const rgba = new Float32Array(n * 4);
+    for (let i = 0; i < n; i++) {
+        const c = Color4.FromHexString(md.vertex_colors[i]);
+        rgba[i * 4]     = c.r;
+        rgba[i * 4 + 1] = c.g;
+        rgba[i * 4 + 2] = c.b;
+        rgba[i * 4 + 3] = 1.0;
+    }
+    vd.colors = rgba;
+
+    vd.applyToMesh(mesh);
+    mesh.useVertexColors = true;
+
+    return mesh;
+};
 
 const createCylinderInstance = (
     defaultColor: string,
