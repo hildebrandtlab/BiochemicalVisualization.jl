@@ -13,10 +13,6 @@ import {
   StandardMaterial,
   Tools,
   Vector3,
-  WebXRDefaultExperience,
-  CreateGround,
-  WebXRFeaturesManager,
-  WebXRFeatureName,
   PointerEventTypes,
   PointerInfo,
   Color4,
@@ -173,32 +169,12 @@ const setupLights = (scene: Scene, camera: ArcRotateCamera) => {
   return { ambient, point, directional };
 };
 
-const setupXR = async (scene: Scene): Promise<WebXRDefaultExperience | undefined> => {
-  if (!navigator.xr) {
-    // @ts-ignore — webxr-polyfill has no shipped types for default export
-    const WebXRPolyfill = (await import("webxr-polyfill")).default;
-    new WebXRPolyfill();
-  }
-  try {
-    const floor = CreateGround("floor", { width: 100, height: 100 }, scene);
-    floor.isPickable = false;  // never let picking grab the XR floor
-    floor.isVisible  = false;  // exists only for XR teleportation
-    const xr = await scene.createDefaultXRExperienceAsync({
-      floorMeshes: [floor],
-      disableDefaultUI: true,
-    });
-    const features = WebXRFeaturesManager.GetAvailableFeatures();
-    if ("xr-layers" in features) {
-      const layers = xr.baseExperience.featuresManager.enableFeature(
-        WebXRFeatureName.LAYERS, "latest", { preferMultiviewOnInit: true }, true, false
-      );
-      layers.attach();
-    }
-    return xr;
-  } catch {
-    return undefined;
-  }
-};
+// WebXR setup intentionally removed. In a notebook context the XR path
+// is never used, but `createDefaultXRExperienceAsync` and the
+// webxr-polyfill load probed Chrome's GPU process in ways that
+// correlated with renderer crashes (STATUS_ACCESS_VIOLATION) on tabs
+// with multiple plots. Re-add behind a flag if VR display ever
+// becomes a target.
 
 const setupHUD = (scene: Scene): { panel: StackPanel, debugText: DebugText } => {
   const ui = AdvancedDynamicTexture.CreateFullscreenUI("hud", true, scene);
@@ -541,7 +517,6 @@ export const SceneComponent = (props: SceneComponentProps) => {
   const webComponentRef = useRef<HTMLDivElement | null>(null);
   const canvas          = useRef<HTMLCanvasElement | null>(null);
   const context         = useRef<AppContext | null>(null);
-  const xr              = useRef<WebXRDefaultExperience | undefined>(undefined);
   const [modal, setModal] = useState<ModalState>({ open: false, text: "" });
 
   const update = (data: any) => {
@@ -598,7 +573,6 @@ export const SceneComponent = (props: SceneComponentProps) => {
 
     const camera = setupCamera(scene, canvas.current);
     const { ambient: ambientLight, point: pointLight, directional: directionalLight } = setupLights(scene, camera);
-    xr.current = await setupXR(scene);
     const { panel: hudPanel, debugText } = setupHUD(scene);
 
     const ctx: AppContext = {
