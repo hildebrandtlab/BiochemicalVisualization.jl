@@ -19,7 +19,6 @@
   "dependencies": {
     "@babylonjs/core": "^8.0.2",
     "@babylonjs/gui": "^8.0.2",
-    "@babylonjs/inspector": "^8.0.2",
     "@r2wc/react-to-web-component": "^2.0.4",
     "@rollup/plugin-commonjs": "^28.0.3",
     "@rollup/plugin-node-resolve": "^16.0.1",

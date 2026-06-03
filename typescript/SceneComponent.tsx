@@ -22,7 +22,14 @@ import {
   Color4,
 } from '@babylonjs/core';
 
-import { Inspector } from '@babylonjs/inspector';
+// @babylonjs/inspector intentionally NOT imported here. It pulled in
+// monaco-editor and other heavy GUI panels (~5-7 MB of bundle plus
+// substantial runtime memory) and was the chief offender of per-tab
+// memory ceilings that crashed Chrome/Safari with multiple plots.
+// The HUD panel below provides the runtime info we actually care
+// about for users (FPS, GPU/CPU frame time, draw calls, active mesh
+// count). Re-add a dev-only Inspector path if/when needed for
+// debugging this package itself.
 
 import { AdvancedDynamicTexture, Button, StackPanel, TextBlock, Control } from '@babylonjs/gui';
 
@@ -356,11 +363,6 @@ const setupMenuBar = (ctx: AppContext) => {
       ctx.debug = on;
       debugBtn.text.text = `Debug: ${on ? "ON" : "OFF"}`;
       ctx.hudPanel.isVisible = on;
-      if (on) {
-        Inspector.Show(ctx.scene, { embedMode: true });
-      } else {
-        Inspector.Hide();
-      }
     },
 
     setHAtomsVisible: (on) => {
