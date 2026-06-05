@@ -38,3 +38,17 @@ Manifest.toml
 
 # Local exploration / vendored upstream sources (not part of the package)
 /tmp/
+
+# Playwright test driver artifacts
+/scripts/test_driver*.log
+/test_driver_failure_*.png
+/jupyter.log
+
+# Python / uv test environment
+/.venv/
+/.python-version
+
+# Local Julia scratch / experiments
+/Untitled.ipynb
+/main.py
+**/Untitled*.ipynb

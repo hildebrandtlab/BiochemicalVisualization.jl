@@ -145,6 +145,11 @@ const setupCamera = (scene: Scene, canvas: HTMLCanvasElement) => {
   if (camera.framingBehavior) {
     camera.framingBehavior.elevationReturnTime = -1;
   }
+  // Without this, mouse-wheel over the canvas zooms the camera AND
+  // scrolls the surrounding notebook page. preventDefault stops the
+  // event from propagating up to the page scroller. passive:false is
+  // required for preventDefault to take effect on wheel.
+  canvas.addEventListener("wheel", (e) => e.preventDefault(), { passive: false });
   return camera;
 };
 
