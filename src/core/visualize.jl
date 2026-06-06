@@ -47,11 +47,14 @@ const VALID_MODEL_TYPES   = ("BALL_AND_STICK", "STICK", "VAN_DER_WAALS", "SAS", 
 # numeric values get snapped to the nearest level so the menu label
 # stays consistent with what's actually being rendered.
 const DENSITY_LEVELS = ("low", "medium", "high", "ultra")
+# Values copied from BALL's VIEW/KERNEL/common.C SurfaceDrawingPrecisions[4],
+# so a density label in this package corresponds to the same triangulation
+# density a BALLView user would expect from the matching preset.
 const _DENSITY_VALUES = (
-    "low"    => 0.5,
-    "medium" => 1.0,
-    "high"   => 2.0,
-    "ultra"  => 4.0,
+    "low"    => 1.5,
+    "medium" => 3.5,
+    "high"   => 6.5,
+    "ultra"  => 12.0,
 )
 _density_value(name::AbstractString) =
     something(findfirst(p -> p[1] == name, _DENSITY_VALUES), 0) |> i ->
