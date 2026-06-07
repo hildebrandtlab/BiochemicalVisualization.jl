@@ -109,3 +109,138 @@ function _prepare_surface_model(
         mesh = TriangleMesh{T}(positions, normals, indices, vertex_colors),
     )
 end
+
+
+# =============================================================================
+# Scene composition — multiple representations rendered in a single Babylon
+# scene. See docs/design/multi_representation.md.
+# =============================================================================
+
+"""
+    DisplayedRepresentation
+
+One entry in a `Scene`. Wraps a precomputed `Representation` with the
+inputs that produced it (so the scene can rebuild the rep when the user
+changes coloring / density / model via the menu), the kwarg state, and a
+visibility flag.
+
+Field order matches the wire format expected by the renderer.
+"""
+mutable struct DisplayedRepresentation{T<:Real}
+    repr::Representation{T}
+    source::AbstractAtomContainer
+    type::String                  # one of VALID_MODEL_TYPES
+    coloring::String              # one of SURFACE_COLOR_METHODS
+    density::String               # one of DENSITY_LEVELS
+    probe_radius::Real
+    solid_color::String
+    visible::Bool
+end
+
+MsgPack.msgpack_type(::Type{DisplayedRepresentation{T}}) where {T} = MsgPack.StructType()
+
+"""
+    Scene
+
+Composable scene that holds an ordered list of representations plus
+display-wide state (style, sizing, currently-active rep index).
+
+Use the mutating `*!` variants (`ball_and_stick!`, `stick!`,
+`van_der_waals!`, `sas!`, `ses!`) to add representations:
+
+    scene = Scene()
+    ball_and_stick!(scene, sys1)
+    sas!(scene, sys2; coloring = "chain")
+    scene
+
+`Base.show` renders the scene via Bonito so returning a `Scene` from a
+notebook cell displays it just like the legacy convenience functions.
+
+`active` is a 1-based index into `representations` (or 0 when the scene
+is empty) indicating which rep the Model / Color / Density menus drive.
+Defaults to the most recently added rep.
+"""
+mutable struct Scene
+    representations::Vector{DisplayedRepresentation}
+    style::String
+    width::String
+    height::String
+    active::Int
+end
+
+Scene(; style::AbstractString="default",
+        width::AbstractString="80%",
+        height::AbstractString="60%") =
+    Scene(DisplayedRepresentation[], String(style), String(width), String(height), 0)
+
+# Defer Base.show implementation to core/visualize.jl, where the Bonito
+# render machinery lives.
+
+# ---- helpers ----
+
+"""
+    set_active!(scene, i)
+
+Make the i-th representation the target of the Model / Color / Density
+menus. Must be in `1:length(scene.representations)` (or 0 if the scene is
+empty).
+"""
+function set_active!(scene::Scene, i::Integer)
+    n = length(scene.representations)
+    (i == 0 && n == 0) || (1 ≤ i ≤ n) ||
+        throw(ArgumentError("active index $i out of range 1:$n"))
+    scene.active = Int(i)
+    return scene
+end
+
+"""
+    set_visible!(scene, i, on::Bool)
+
+Hide or show the i-th representation without removing it from the scene.
+"""
+function set_visible!(scene::Scene, i::Integer, on::Bool)
+    1 ≤ i ≤ length(scene.representations) ||
+        throw(ArgumentError("visibility index $i out of range 1:$(length(scene.representations))"))
+    scene.representations[i].visible = on
+    return scene
+end
+
+"""
+    Base.delete!(scene, i)
+
+Remove the i-th representation. The active index is adjusted so it
+continues to point at a valid rep (or 0 when the scene is empty).
+"""
+function Base.delete!(scene::Scene, i::Integer)
+    1 ≤ i ≤ length(scene.representations) ||
+        throw(ArgumentError("delete index $i out of range 1:$(length(scene.representations))"))
+    deleteat!(scene.representations, i)
+    n = length(scene.representations)
+    if n == 0
+        scene.active = 0
+    elseif scene.active > n
+        scene.active = n
+    elseif scene.active == i && i > 1
+        scene.active = i - 1
+    end
+    return scene
+end
+
+"""
+    Base.empty!(scene)
+
+Remove all representations from the scene.
+"""
+function Base.empty!(scene::Scene)
+    empty!(scene.representations)
+    scene.active = 0
+    return scene
+end
+
+# Internal: append a freshly-built rep to the scene and bump `active` to
+# point at it. Called from the mutating display functions in visualize.jl.
+function _push_representation!(scene::Scene, dr::DisplayedRepresentation)
+    push!(scene.representations, dr)
+    scene.active = length(scene.representations)
+    return scene
+end

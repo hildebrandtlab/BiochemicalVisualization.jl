@@ -1,11 +1,24 @@
 export
     ball_and_stick,
+    ball_and_stick!,
     sas,
+    sas!,
+    Scene,
     ses,
+    ses!,
+    set_active!,
+    set_visible!,
     stick,
-    van_der_waals
+    stick!,
+    van_der_waals,
+    van_der_waals!
 
-const VISUALIZE = ES6Module(asset_path("../typescript/dist/biochemicalvisualization.js"))::Asset
+const _VISUALIZE_BUNDLE = asset_path("../typescript/dist/biochemicalvisualization.js")
+# Tell Julia's precompiler that this module depends on the bundle file.
+# Without this, rebuilding the bundle (`npm run build`) does NOT
+# invalidate BCV's precompile cache and Bonito keeps serving stale JS.
+include_dependency(_VISUALIZE_BUNDLE)
+const VISUALIZE = ES6Module(_VISUALIZE_BUNDLE)::Asset
 
 const _hex_colors = [hex(RGB((e ./ 255)...)) for e in ELEMENT_COLORS]
 
@@ -124,6 +137,260 @@ function _focus_point(r::Representation)
     nothing
 end
 
+# Centroid across ALL representations in a scene. Atom models supply
+# primitives (sphere/cylinder centers); surface models supply only `mesh`.
+# Returns `nothing` only for a fully empty scene.
+function _focus_point(scene::Scene)
+    accumulated = Float64[0, 0, 0]
+    n_total = 0
+    for dr in scene.representations
+        r = dr.repr
+        for prim in vcat(values(r.primitives)...)
+            c = _center(prim)
+            accumulated[1] += c[1]
+            accumulated[2] += c[2]
+            accumulated[3] += c[3]
+            n_total += 1
+        end
+        if !isnothing(r.mesh)
+            m = r.mesh
+            n_verts = length(m.positions) ÷ 3
+            @inbounds for i in 1:n_verts
+                accumulated[1] += m.positions[3i - 2]
+                accumulated[2] += m.positions[3i - 1]
+                accumulated[3] += m.positions[3i]
+            end
+            n_total += n_verts
+        end
+    end
+    n_total == 0 && return nothing
+    return accumulated ./ n_total
+end
+
+# Resolves the kwargs surface params for one rep build.
+_build_repr(dr::DisplayedRepresentation) = prepare_model(dr.source;
+    type=dr.type,
+    probe_radius=dr.probe_radius,
+    density=_density_value(dr.density),
+    coloring=dr.coloring,
+    solid_color=dr.solid_color)
+
+# Pack one rep for the wire — keep field order in sync with rendering.ts.
+_serialize_rep(dr::DisplayedRepresentation) = Dict(
+    "repr"     => dr.repr,
+    "type"     => dr.type,
+    "coloring" => dr.coloring,
+    "density"  => dr.density,
+    "visible"  => dr.visible,
+)
+_serialize_scene(scene::Scene) = Dict(
+    "representations" => [_serialize_rep(dr) for dr in scene.representations],
+    "active"          => scene.active,
+)
+
+# Build the Bonito App that renders `scene`. Called from Base.show below.
+function _build_scene_app(scene::Scene)
+    isempty(scene.representations) &&
+        throw(ArgumentError("cannot render an empty Scene; add a representation first (e.g. stick!(scene, sys))"))
+
+    fp = _focus_point(scene)
+    isnothing(fp) && throw(ArgumentError("scene has no displayable geometry"))
+    focus_point = fp
+
+    style_str = scene.style
+    width     = scene.width
+    height    = scene.height
+    dom = DOM.div(;style="width: $width; height: $height;")
+
+    # JS↔Julia channels. Each request payload may include a `rep`
+    # index (1-based); when absent, requests resolve to `scene.active`.
+    # The top menu bar dispatches without `rep` (drives the active
+    # rep); the sidebar dispatches with an explicit `rep` for per-row
+    # actions.
+    model_request      = Observable{Any}(nothing)
+    coloring_request   = Observable{Any}(nothing)
+    density_request    = Observable{Any}(nothing)
+    visibility_request = Observable{Any}(nothing)
+    delete_request     = Observable{Any}(nothing)
+    active_request     = Observable{Any}(nothing)
+    scene_obs          = Observable{Any}(_serialize_scene(scene))
+
+    # Resolve the rep index from a Dict payload. Falls back to
+    # scene.active. Returns 0 if invalid (no rep at that index).
+    function _resolve_rep_idx(payload)
+        n = length(scene.representations)
+        n == 0 && return 0
+        i = if payload isa AbstractDict && haskey(payload, "rep")
+            try Int(payload["rep"]) catch; 0 end
+        else
+            scene.active
+        end
+        (1 ≤ i ≤ n) ? i : 0
+    end
+
+    function rebuild_rep!(i::Int)
+        (i == 0 || i > length(scene.representations)) && return
+        dr = scene.representations[i]
+        new_r = _build_repr(dr)
+        isnothing(new_r) && return
+        dr.repr = new_r
+        scene_obs[] = _serialize_scene(scene)
+    end
+
+    on(model_request) do payload
+        payload isa AbstractDict || return
+        requested = String(get(payload, "type", ""))
+        requested in VALID_MODEL_TYPES || return
+        i = _resolve_rep_idx(payload)
+        i == 0 && return
+        scene.representations[i].type = requested
+        rebuild_rep!(i)
+    end
+
+    on(coloring_request) do payload
+        payload isa AbstractDict || return
+        requested = String(get(payload, "coloring", ""))
+        requested in SURFACE_COLOR_METHODS || return
+        i = _resolve_rep_idx(payload)
+        i == 0 && return
+        scene.representations[i].coloring = requested
+        rebuild_rep!(i)
+    end
+
+    on(density_request) do payload
+        payload isa AbstractDict || return
+        requested = String(get(payload, "density", ""))
+        requested in DENSITY_LEVELS || return
+        i = _resolve_rep_idx(payload)
+        i == 0 && return
+        dr = scene.representations[i]
+        dr.density = requested
+        # Density is a no-op for atom models; still record the setting
+        # but don't re-triangulate.
+        dr.type in ("SAS", "SES") && rebuild_rep!(i)
+    end
+
+    on(visibility_request) do payload
+        payload isa AbstractDict || return
+        i = _resolve_rep_idx(payload)
+        i == 0 && return
+        scene.representations[i].visible = Bool(get(payload, "visible", true))
+        scene_obs[] = _serialize_scene(scene)
+    end
+
+    on(delete_request) do payload
+        payload isa AbstractDict || return
+        i = _resolve_rep_idx(payload)
+        i == 0 && return
+        Base.delete!(scene, i)
+        # Empty scenes can't be serialized for rendering; the JS side
+        # simply leaves the previous frame standing. A more graceful
+        # path is to clear the canvas, which the JS update() does
+        # because it now handles a length-0 list.
+        scene_obs[] = _serialize_scene(scene)
+    end
+
+    on(active_request) do payload
+        payload isa AbstractDict || return
+        i = _resolve_rep_idx(payload)
+        i == 0 && return
+        scene.active = i
+        scene_obs[] = _serialize_scene(scene)
+    end
+
+    initial_state = _serialize_scene(scene)
+
+    # Each plot needs its own DOM id so multi-plot notebooks don't
+    # collide.
+    scene_id     = _next_scene_id()
+    scene_div_id = scene_id * "-div"
+
+    App() do session::Session
+        _maybe_dedup_visualize_asset!(session)
+        Bonito.onload(session, dom, js"""
+            function (container){
+                $(VISUALIZE).then(VISUALIZE => {
+                    parent = $dom.parentNode;
+                    parent.style.height = '100vh';
+
+                    const sceneEl = document.createElement("bv-scene");
+                    sceneEl.setAttribute("id", $scene_id);
+                    sceneEl.setAttribute("width", $width);
+                    sceneEl.setAttribute("height", $height);
+
+                    const modelReq      = $(model_request);
+                    const coloringReq   = $(coloring_request);
+                    const densityReq    = $(density_request);
+                    const visibilityReq = $(visibility_request);
+                    const deleteReq     = $(delete_request);
+                    const activeReq     = $(active_request);
+                    const sceneObs      = $(scene_obs);
+
+                    sceneEl.addEventListener('bv-scene-mounted', () => {
+                        function forwardToScene(eventName, data, component) {
+                            if (component) {
+                                const event = new CustomEvent(eventName, { detail: data });
+                                component.dispatchEvent(event);
+                            } else {
+                                console.warn("React Web Component not found!");
+                            }
+                        }
+
+                        const scene_div = document.getElementById($scene_div_id);
+
+                        forwardToScene("set-focus", { focus_point: $focus_point }, scene_div);
+                        forwardToScene("add-representation", $initial_state, scene_div);
+                        forwardToScene("set-render-mode", { ssao_mode: 2, debug: false, style: $style_str }, scene_div);
+
+                        // Forward the entire detail dict so the
+                        // sidebar can include an explicit `rep` index;
+                        // the menu bar dispatches without one (Julia
+                        // falls back to scene.active).
+                        scene_div.addEventListener("bv-request-model",      (e) => modelReq.notify(e.detail));
+                        scene_div.addEventListener("bv-request-coloring",   (e) => coloringReq.notify(e.detail));
+                        scene_div.addEventListener("bv-request-density",    (e) => densityReq.notify(e.detail));
+                        scene_div.addEventListener("bv-request-visibility", (e) => visibilityReq.notify(e.detail));
+                        scene_div.addEventListener("bv-request-delete",     (e) => deleteReq.notify(e.detail));
+                        scene_div.addEventListener("bv-request-active",     (e) => activeReq.notify(e.detail));
+
+                        // Julia → JS: rebuilt scene state arrived
+                        sceneObs.on((newState) => {
+                            forwardToScene("add-representation", newState, scene_div);
+                        });
+                    });
+
+                    $dom.appendChild(sceneEl);
+                })
+            }
+        """)
+
+        Bonito.record_states(session, dom)
+    end
+end
+
+# Base.show hooks so a Scene returned from a notebook cell renders the
+# same way an App() does. Bonito's own App show method already handles
+# all the relevant MIMEs, so we just construct the App and delegate.
+#
+# We deliberately enumerate the MIMEs we support — defining a generic
+# `show(::IO, ::MIME, ::Scene)` would force a fallback path for every
+# other MIME the display stack probes (text/plain, image/svg+xml, etc.),
+# and the `invoke(...)` route into Base.show with signature
+# (::IO, ::MIME, ::Any) is itself ambiguous across many packages'
+# specialized methods. Per-MIME definitions keep dispatch unambiguous.
+for _mime in (MIME"text/html",
+              MIME"application/prs.juno.plotpane+html",
+              MIME"juliavscode/html",
+              MIME"application/vnd.Bonito.application+html")
+    @eval Base.showable(::$_mime, ::Scene) = true
+    @eval Base.show(io::IO, mime::$_mime, scene::Scene) =
+        show(io, mime, _build_scene_app(scene))
+end
+
+# -----------------------------------------------------------------------------
+# Legacy single-rep entry point. Kept for backwards compat — implemented
+# in terms of the Scene API.
+# -----------------------------------------------------------------------------
 function display_model(
     ac::AbstractAtomContainer;
     type="BALL_AND_STICK",
@@ -139,209 +406,139 @@ function display_model(
     if !(style_str in VALID_RENDER_STYLES)
         throw(ArgumentError("style must be one of $(VALID_RENDER_STYLES), got: $(style)"))
     end
-
     type_str = string(type)
     if !(type_str in VALID_MODEL_TYPES)
         throw(ArgumentError("type must be one of $(VALID_MODEL_TYPES), got: $(type)"))
     end
-
     if !(coloring in SURFACE_COLOR_METHODS)
         throw(ArgumentError("coloring must be one of $(SURFACE_COLOR_METHODS), got: $(coloring)"))
     end
 
-    # Resolve the user-supplied `density` to (level name, numeric value).
-    # The menu cycle works in level names; the triangulator wants a number.
     density_level_str = _density_level(density)
     density_value     = _density_value(density_level_str)
 
-    dom = DOM.div(;style="width: $width; height: $height;")
-
-    # Build only the initially-active representation. The others are
-    # recomputed on demand when the user switches via the menu. This keeps
-    # initial latency and wire size proportional to the molecule size, not
-    # to the number of model variants — the right choice for large systems.
     initial_r = prepare_model(ac;
         type=type_str, probe_radius, density=density_value, coloring, solid_color)
-    if isnothing(initial_r)
-        return
-    end
+    isnothing(initial_r) && return
 
-    fp = _focus_point(initial_r)
-    if isnothing(fp)
-        return
-    end
-    focus_point = fp
+    scene = Scene(style=style_str, width=width, height=height)
+    push!(scene.representations, DisplayedRepresentation(
+        initial_r, ac, type_str, String(coloring), density_level_str,
+        probe_radius, solid_color, true,
+    ))
+    scene.active = 1
+    return scene
+end
 
-    # JS↔Julia channels driving the menu-bar buttons:
-    #   model_request    : Model cycle button -> rebuild with new `type`
-    #   coloring_request : Color cycle button -> rebuild with new `coloring`
-    #   density_request  : Density cycle button -> rebuild with new `density`
-    #   repr_obs         : Julia pushes back; JS dispatches add-representation
-    # All three requests funnel through `repr_obs` so the JS side has a
-    # single update path.
-    active_type      = Ref(type_str)
-    active_coloring  = Ref(coloring)
-    active_density   = Ref(density_level_str)
-    model_request    = Observable(type_str)
-    coloring_request = Observable(coloring)
-    density_request  = Observable(density_level_str)
-    repr_obs         = Observable{Any}(initial_r)
+# -----------------------------------------------------------------------------
+# Scene-mutating display API (the modern entry points). The single-call
+# convenience functions below build a fresh `Scene` and delegate.
+# -----------------------------------------------------------------------------
 
-    rebuild() = begin
-        new_r = prepare_model(ac;
-            type=active_type[], probe_radius,
-            density=_density_value(active_density[]),
-            coloring=active_coloring[], solid_color)
-        isnothing(new_r) || (repr_obs[] = new_r)
-    end
+# Shared back-end for the *! mutators. Validates kwargs, builds the
+# representation, wraps it in a DisplayedRepresentation, appends to the
+# scene, and makes it the active rep.
+function _push_model!(scene::Scene, ac::AbstractAtomContainer, type::AbstractString;
+        probe_radius=1.5,
+        density=1.0,
+        coloring::AbstractString="element",
+        solid_color::AbstractString="#cccccc")
+    type_str = String(type)
+    type_str in VALID_MODEL_TYPES ||
+        throw(ArgumentError("type must be one of $(VALID_MODEL_TYPES), got: $type"))
+    coloring in SURFACE_COLOR_METHODS ||
+        throw(ArgumentError("coloring must be one of $(SURFACE_COLOR_METHODS), got: $coloring"))
 
-    on(model_request) do requested
-        requested in VALID_MODEL_TYPES || return
-        active_type[] = requested
-        rebuild()
-    end
+    density_level = _density_level(density)
+    density_value = _density_value(density_level)
+    repr = prepare_model(ac;
+        type=type_str, probe_radius, density=density_value, coloring, solid_color)
+    isnothing(repr) && return scene
 
-    on(coloring_request) do requested
-        requested in SURFACE_COLOR_METHODS || return
-        active_coloring[] = requested
-        rebuild()
-    end
+    dr = DisplayedRepresentation(
+        repr, ac, type_str, String(coloring), density_level,
+        probe_radius, String(solid_color), true,
+    )
+    _push_representation!(scene, dr)
+    return scene
+end
 
-    on(density_request) do requested
-        requested in DENSITY_LEVELS || return
-        active_density[] = requested
-        # No rebuild for atom models — density is a no-op for them but a
-        # rebuild churns the cylinder/sphere instances for nothing.
-        if active_type[] in ("SAS", "SES")
-            rebuild()
-        end
-    end
-
-    # Each plot needs its own DOM id so multi-plot notebooks don't
-    # collide. The id flows into both the <bv-scene> element and the
-    # React-mounted scene_div ($scene_id + "-div") on the JS side.
-    scene_id     = _next_scene_id()
-    scene_div_id = scene_id * "-div"
-
-    App() do session::Session
-        _maybe_dedup_visualize_asset!(session)
-        Bonito.onload(session, dom, js"""
-            function (container){
-                $(VISUALIZE).then(VISUALIZE => {
-                    parent = $dom.parentNode;
-                    parent.style.height = '100vh';
-
-                    const scene = document.createElement("bv-scene");
-                    scene.setAttribute("id", $scene_id);
-                    scene.setAttribute("width", $width);
-                    scene.setAttribute("height", $height);
-
-                    const modelReq    = $(model_request);
-                    const coloringReq = $(coloring_request);
-                    const densityReq  = $(density_request);
-                    const reprObs     = $(repr_obs);
-
-                    // Listen on `scene` itself (not document) so each
-                    // plot's mount only triggers its own setup. The
-                    // bv-scene-mounted event is composed:true so it
-                    // passes through the host element on its way up.
-                    scene.addEventListener('bv-scene-mounted', () => {
-                        function forwardToScene(eventName, data, component) {
-                            if (component) {
-                                const event = new CustomEvent(eventName, { detail: data });
-                                component.dispatchEvent(event);
-                            } else {
-                                console.warn("React Web Component not found!");
-                            }
-                        }
-
-                        const scene_div = document.getElementById($scene_div_id);
-
-                        forwardToScene("set-focus", { focus_point: $focus_point }, scene_div);
-                        forwardToScene("add-representation",
-                            { representation: $initial_r, active: $type_str,
-                              coloring: $coloring, density: $density_level_str },
-                            scene_div);
-                        forwardToScene("set-render-mode", { ssao_mode: 2, debug: false, style: $style_str }, scene_div);
-
-                        // JS → Julia request events dispatch on the local
-                        // scene_div (see SceneComponent.tsx), so listen
-                        // there too — listening on `document` would let
-                        // one plot's menu drive every plot in the page.
-                        scene_div.addEventListener("bv-request-model", (e) => {
-                            modelReq.notify(e.detail.type);
-                        });
-                        scene_div.addEventListener("bv-request-coloring", (e) => {
-                            coloringReq.notify(e.detail.coloring);
-                        });
-                        scene_div.addEventListener("bv-request-density", (e) => {
-                            densityReq.notify(e.detail.density);
-                        });
-
-                        // Julia → JS: rebuilt representation arrived
-                        reprObs.on((newRepr) => {
-                            forwardToScene("add-representation", { representation: newRepr }, scene_div);
-                        });
-                    });
-
-                    $dom.appendChild(scene);
-                })
-            }
-        """)
-
-        Bonito.record_states(session, dom)
-    end
+# Internal: build a one-rep scene at the right style/sizing using the
+# kwargs the legacy convenience functions accept.
+function _scene_with(ac, type;
+        style="default", width="80%", height="60%", kwargs...)
+    style_str = String(string(style))
+    style_str in VALID_RENDER_STYLES ||
+        throw(ArgumentError("style must be one of $(VALID_RENDER_STYLES), got: $style"))
+    scene = Scene(style=style_str, width=String(string(width)), height=String(string(height)))
+    return _push_model!(scene, ac, type; kwargs...)
 end
 
 """
-    ball_and_stick(::AbstractAtomContainer; style=:default, kwargs...)
+    ball_and_stick(ac; style=:default, kwargs...) -> Scene
+    ball_and_stick!(scene, ac; kwargs...) -> Scene
 
-Creates and displays a ball-and-stick representation for the given atom container.
-Pass `style=:qutemol` for a render approximating the look of QuteMol (white
-background, glossy spheres, atom halos, SSAO on). The same style can be toggled
-at runtime from the menu bar in the rendered scene.
-"""
-ball_and_stick(ac; kwargs...) = display_model(ac; type="BALL_AND_STICK", kwargs...)
+Build a ball-and-stick representation. The non-mutating form creates a
+fresh `Scene` and returns it (so the REPL / notebook display machinery
+renders it). The `!` form appends to an existing scene and returns it,
+enabling composition:
 
-"""
-    stick(::AbstractAtomContainer; style=:default, kwargs...)
+    scene = Scene()
+    ball_and_stick!(scene, sys)
+    sas!(scene, sys; coloring = "chain")
+    scene
 
-Creates and displays a stick representation for the given atom container.
-See [`ball_and_stick`](@ref) for the `style` keyword.
+Pass `style=:qutemol` for a render approximating the look of QuteMol.
+The same style can be toggled at runtime from the menu bar.
 """
-stick(ac; kwargs...)          = display_model(ac; type="STICK", kwargs...)
-
-"""
-    van_der_waals(::AbstractAtomContainer; sphere_radius=nothing, style=:default, kwargs...)
-
-Creates and displays a van-der-Waals representation for the given atom container.
-By default, sphere radii are looked up per element from a Bondi/Mantina table of
-van der Waals radii. Pass `sphere_radius` (a `Real`) to render every atom with the
-same constant radius instead — useful for space-filling renders that emphasize
-shape over chemistry. See [`ball_and_stick`](@ref) for the `style` keyword.
-"""
-van_der_waals(ac; kwargs...)  = display_model(ac; type="VAN_DER_WAALS", kwargs...)
+ball_and_stick(ac; kwargs...)              = _scene_with(ac, "BALL_AND_STICK"; kwargs...)
+ball_and_stick!(scene::Scene, ac; kwargs...) = _push_model!(scene, ac, "BALL_AND_STICK"; kwargs...)
 
 """
-    sas(::AbstractAtomContainer; probe_radius=1.5, density=1.0,
-        coloring="element", solid_color="#cccccc", style=:default, kwargs...)
+    stick(ac; style=:default, kwargs...) -> Scene
+    stick!(scene, ac; kwargs...) -> Scene
 
-Creates and displays a triangulated **solvent-accessible surface** for the
-given atom container. The mesh is computed by BiochemicalAlgorithms via
-`triangulate_sas`; vertex colors are picked by the `coloring` method (one
-of "element", "chain", "residue", "residue_index", "solid") — see
-[`SURFACE_COLOR_METHODS`](@ref). `probe_radius` is the solvent probe size
-in Å; `density` controls the icosphere sampling resolution (>1 = denser
-mesh). `solid_color` is only consulted when `coloring="solid"`.
+Stick representation. See [`ball_and_stick`](@ref) for the kwarg semantics.
 """
-sas(ac; kwargs...)            = display_model(ac; type="SAS", kwargs...)
+stick(ac; kwargs...)              = _scene_with(ac, "STICK"; kwargs...)
+stick!(scene::Scene, ac; kwargs...) = _push_model!(scene, ac, "STICK"; kwargs...)
 
 """
-    ses(::AbstractAtomContainer; probe_radius=1.5, density=1.0,
-        coloring="element", solid_color="#cccccc", style=:default, kwargs...)
+    van_der_waals(ac; sphere_radius=nothing, style=:default, kwargs...) -> Scene
+    van_der_waals!(scene, ac; sphere_radius=nothing, kwargs...) -> Scene
 
-Creates and displays a triangulated **solvent-excluded surface** for the
-given atom container. See [`sas`](@ref) for the coloring / density /
-probe_radius keywords.
+Van-der-Waals (space-filling) representation. By default sphere radii are
+looked up per element from a Bondi/Mantina table; pass `sphere_radius`
+(a `Real`) to render every atom with the same constant radius instead.
+See [`ball_and_stick`](@ref) for `style`.
 """
-ses(ac; kwargs...)            = display_model(ac; type="SES", kwargs...)
+van_der_waals(ac; kwargs...)              = _scene_with(ac, "VAN_DER_WAALS"; kwargs...)
+van_der_waals!(scene::Scene, ac; kwargs...) = _push_model!(scene, ac, "VAN_DER_WAALS"; kwargs...)
+
+"""
+    sas(ac; probe_radius=1.5, density="medium",
+        coloring="element", solid_color="#cccccc", style=:default, kwargs...) -> Scene
+    sas!(scene, ac; kwargs...) -> Scene
+
+Triangulated solvent-accessible surface. The mesh is computed by
+BiochemicalAlgorithms via `triangulate_sas`; vertex colors are picked by
+the `coloring` method (`"element"`, `"chain"`, `"residue"`,
+`"residue_index"`, `"solid"`) — see [`SURFACE_COLOR_METHODS`](@ref).
+`probe_radius` is the solvent probe size in Å; `density` controls the
+icosphere sampling resolution (matches BALL presets `"low"` / `"medium"` /
+`"high"` / `"ultra"` or accepts an arbitrary numeric multiplier).
+`solid_color` is only consulted when `coloring="solid"`.
+"""
+sas(ac; kwargs...)              = _scene_with(ac, "SAS"; kwargs...)
+sas!(scene::Scene, ac; kwargs...) = _push_model!(scene, ac, "SAS"; kwargs...)
+
+"""
+    ses(ac; probe_radius=1.5, density="medium",
+        coloring="element", solid_color="#cccccc", style=:default, kwargs...) -> Scene
+    ses!(scene, ac; kwargs...) -> Scene
+
+Triangulated solvent-excluded surface. See [`sas`](@ref) for the
+coloring / density / probe_radius semantics.
+"""
+ses(ac; kwargs...)              = _scene_with(ac, "SES"; kwargs...)
+ses!(scene::Scene, ac; kwargs...) = _push_model!(scene, ac, "SES"; kwargs...)

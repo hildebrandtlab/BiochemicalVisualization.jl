@@ -29,7 +29,7 @@ import {
 
 import { AdvancedDynamicTexture, Button, StackPanel, TextBlock, Control } from '@babylonjs/gui';
 
-import { addRepresentation } from './rendering';
+import { renderScene } from './rendering';
 import { changeSSAOMode, SsaoCache } from './ssao';
 import { RenderStyle, applyRenderStyle } from './style';
 import { LightingMode, LIGHTING_MODES, applyLightingMode, lightingModeLabel } from './lighting';
@@ -441,12 +441,12 @@ const clearRepresentation = (ctx: AppContext) => {
   ctx.pickedMesh = undefined;
 };
 
-// Apply a single freshly-shipped representation: tear down the previous
-// one, add the new one, re-apply the active style. Used by the initial
-// add-representation event and by every model switch round-trip.
-const renderRepresentation = (ctx: AppContext, repr: any) => {
+// Tear down every previously rendered representation and build the
+// freshly-shipped list. Used by the initial add-representation event
+// and by every Julia → JS scene rebuild.
+const applyScene = (ctx: AppContext, reps: any[]) => {
   clearRepresentation(ctx);
-  addRepresentation(ctx, { representation: repr });
+  renderScene(ctx, reps);
   applyRenderStyle(ctx, ctx.renderStyle);
   ctx.scene.createOrUpdateSelectionOctree();
   ctx.scene.freezeActiveMeshes();
@@ -516,45 +516,108 @@ const setupPicking = (
 // React component
 // ---------------------------------------------------------------------------
 
+// Compact summary of one representation that the sidebar renders from.
+// Mirrors the wire fields from Julia's _serialize_rep, minus the heavy
+// `repr` payload which the sidebar doesn't need.
+type RepSummary = {
+  type:     ModelType;
+  coloring: ColoringMethod;
+  density:  DensityLevel;
+  visible:  boolean;
+};
+
 export const SceneComponent = (props: SceneComponentProps) => {
   const { id, width = '100%', height = '100%' } = props;
 
-  const webComponentRef = useRef<HTMLDivElement | null>(null);
-  const canvas          = useRef<HTMLCanvasElement | null>(null);
-  const context         = useRef<AppContext | null>(null);
-  const [modal, setModal] = useState<ModalState>({ open: false, text: "" });
+  const webComponentRef  = useRef<HTMLDivElement | null>(null);
+  const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
+  const canvas           = useRef<HTMLCanvasElement | null>(null);
+  const context          = useRef<AppContext | null>(null);
+  const [modal, setModal]   = useState<ModalState>({ open: false, text: "" });
+  const [reps,  setReps]    = useState<RepSummary[]>([]);
+  const [active, setActive] = useState<number>(0);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
+  // Connection-health watchdog: if the first scene state hasn't
+  // arrived within CONNECTION_TIMEOUT_MS, surface a visible banner so
+  // the user notices a dead WebSocket (typical cause: page was
+  // rendered against a port that's no longer the kernel's port).
+  const [connectionLost, setConnectionLost] = useState<boolean>(false);
+  const receivedDataRef = useRef<boolean>(false);
 
+  // Handle a full scene state shipped from Julia. Wire format is
+  //   { representations: [{ repr, type, coloring, density, visible }, ...], active: 1-based }
+  // The menu bar labels mirror the *active* rep, so we pull its
+  // type / coloring / density into ctx for the buttons to read; the
+  // sidebar mirrors the entire list.
   const update = (data: any) => {
-    if (!context.current || !data.representation) return;
-    if (data.active && MODEL_TYPES.includes(data.active)) {
-      context.current.activeModel = data.active as ModelType;
+    if (!context.current || !Array.isArray(data?.representations)) return;
+
+    // First state from Julia: the WebSocket round-trip is alive. Clear
+    // any pending "disconnected" banner.
+    receivedDataRef.current = true;
+    setConnectionLost(false);
+
+    const reps: any[] = data.representations;
+    const newActive = typeof data.active === "number" ? data.active : 0;
+
+    // Empty scene (after the last delete) — clear meshes, clear sidebar.
+    if (reps.length === 0) {
+      clearRepresentation(context.current);
+      setReps([]);
+      setActive(0);
+      return;
     }
-    if (data.coloring && COLORING_METHODS.includes(data.coloring)) {
-      context.current.activeColoring = data.coloring as ColoringMethod;
+
+    const activeRep =
+      newActive > 0 && newActive <= reps.length ? reps[newActive - 1] : null;
+
+    if (activeRep) {
+      if (MODEL_TYPES.includes(activeRep.type)) {
+        context.current.activeModel = activeRep.type as ModelType;
+      }
+      if (COLORING_METHODS.includes(activeRep.coloring)) {
+        context.current.activeColoring = activeRep.coloring as ColoringMethod;
+      }
+      if (DENSITY_LEVELS.includes(activeRep.density)) {
+        context.current.activeDensity = activeRep.density as DensityLevel;
+      }
     }
-    if (data.density && DENSITY_LEVELS.includes(data.density)) {
-      context.current.activeDensity = data.density as DensityLevel;
-    }
-    renderRepresentation(context.current, data.representation);
+
+    setReps(reps.map(r => ({
+      type:     r.type,
+      coloring: r.coloring,
+      density:  r.density,
+      visible:  r.visible !== false,
+    })));
+    setActive(newActive);
+
+    applyScene(context.current, reps);
   };
 
+  // Sidebar → Julia event dispatchers. The detail object always
+  // carries a 1-based `rep` index; Julia's _resolve_rep_idx routes the
+  // mutation to that rep.
+  const requestActive     = (i: number) =>
+    webComponentRef.current?.dispatchEvent(
+      new CustomEvent("bv-request-active", { detail: { rep: i } }));
+  const requestVisibility = (i: number, visible: boolean) =>
+    webComponentRef.current?.dispatchEvent(
+      new CustomEvent("bv-request-visibility", { detail: { rep: i, visible } }));
+  const requestDelete     = (i: number) =>
+    webComponentRef.current?.dispatchEvent(
+      new CustomEvent("bv-request-delete", { detail: { rep: i } }));
+
   const resizeHandler = () => {
-    if (!context.current || !canvas.current || !webComponentRef.current) return;
+    if (!context.current || !canvas.current || !canvasWrapperRef.current) return;
 
-    const newWidth  = webComponentRef.current.getAttribute("width")  || "100%";
-    const newHeight = webComponentRef.current.getAttribute("height") || "100%";
+    // The sidebar shrinks the canvas-bearing column; use the wrapper's
+    // actual layout box rather than the outer cell so the WebGL
+    // backbuffer matches what's drawn.
+    const containerWidth  = canvasWrapperRef.current.offsetWidth;
+    const containerHeight = canvasWrapperRef.current.offsetHeight;
 
-    const containerWidth  = webComponentRef.current.offsetWidth;
-    const containerHeight = webComponentRef.current.offsetHeight;
-
-    const parsePx = (v: string, container: number) => {
-      if (v.endsWith("%"))  return container * (parseFloat(v) / 100);
-      if (v.endsWith("px")) return parseFloat(v);
-      return container;
-    };
-
-    canvas.current.setAttribute("width",  parsePx(newWidth,  containerWidth).toString());
-    canvas.current.setAttribute("height", parsePx(newHeight, containerHeight).toString());
+    canvas.current.setAttribute("width",  String(containerWidth));
+    canvas.current.setAttribute("height", String(containerHeight));
     canvas.current.style.width  = "100%";
     canvas.current.style.height = "100%";
 
@@ -650,6 +713,15 @@ export const SceneComponent = (props: SceneComponentProps) => {
       }
     };
 
+    // Watchdog: if the initial scene-state event never arrives we
+    // surface a banner. ~10s is well past first-render of any
+    // reasonable structure but short enough that users don't waste
+    // minutes wondering why the canvas is empty.
+    const CONNECTION_TIMEOUT_MS = 10_000;
+    const watchdog = window.setTimeout(() => {
+      if (!receivedDataRef.current) setConnectionLost(true);
+    }, CONNECTION_TIMEOUT_MS);
+
     init().then(() => {
       const root = webComponentRef.current;
       if (!root) return;
@@ -661,6 +733,7 @@ export const SceneComponent = (props: SceneComponentProps) => {
     });
 
     return () => {
+      window.clearTimeout(watchdog);
       context.current?.scene.getEngine().dispose();
       window.removeEventListener("resize", resizeHandler);
       const root = webComponentRef.current;
@@ -673,40 +746,247 @@ export const SceneComponent = (props: SceneComponentProps) => {
   }, []);
 
   return (
-    <div ref={webComponentRef} id={id + "-div"} style={{ width, height, position: 'relative' }}>
-      <canvas style={{ width: "100%", height: "100%" }} ref={canvas} />
-      {modal.open && (
-        <div style={{
-          position: 'absolute',
-          top: 8,
-          right: 8,
-          background: 'rgba(0, 0, 0, 0.85)',
-          color: 'white',
-          padding: '12px 16px 12px 12px',
-          borderRadius: 6,
-          fontFamily: 'monospace',
-          fontSize: 12,
-          whiteSpace: 'pre',
-          zIndex: 10,
-          maxWidth: '40%',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
-        }}>
-          <button
-            onClick={() => setModal({ open: false, text: "" })}
-            aria-label="Close"
-            style={{
-              float: 'right',
-              marginLeft: 12,
-              background: 'transparent',
-              color: 'white',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: 16,
-              lineHeight: 1,
-              padding: 0,
-            }}
-          >×</button>
-          {modal.text}
+    <div
+      ref={webComponentRef}
+      id={id + "-div"}
+      style={{ width, height, position: "relative" }}
+    >
+      <div
+        ref={canvasWrapperRef}
+        style={{ width: "100%", height: "100%", position: "relative" }}
+      >
+        <canvas style={{ width: "100%", height: "100%" }} ref={canvas} />
+        {connectionLost && (
+          <div style={{
+            position: "absolute",
+            top: 12,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "rgba(140, 30, 30, 0.92)",
+            color: "white",
+            padding: "10px 16px",
+            borderRadius: 6,
+            fontFamily: "system-ui, sans-serif",
+            fontSize: 13,
+            lineHeight: 1.35,
+            maxWidth: "80%",
+            boxShadow: "0 2px 10px rgba(0,0,0,0.45)",
+            zIndex: 20,
+            textAlign: "center",
+          }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>
+              Disconnected from Julia kernel
+            </div>
+            <div style={{ opacity: 0.9 }}>
+              No scene data arrived over the WebSocket. The page may be
+              pointing at a port that's no longer live. Restart the
+              kernel and reload the notebook page.
+            </div>
+          </div>
+        )}
+        {modal.open && (
+          <div style={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            background: "rgba(0, 0, 0, 0.85)",
+            color: "white",
+            padding: "12px 16px 12px 12px",
+            borderRadius: 6,
+            fontFamily: "monospace",
+            fontSize: 12,
+            whiteSpace: "pre",
+            zIndex: 10,
+            maxWidth: "40%",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
+          }}>
+            <button
+              onClick={() => setModal({ open: false, text: "" })}
+              aria-label="Close"
+              style={{
+                float: "right",
+                marginLeft: 12,
+                background: "transparent",
+                color: "white",
+                border: "none",
+                cursor: "pointer",
+                fontSize: 16,
+                lineHeight: 1,
+                padding: 0,
+              }}
+            >×</button>
+            {modal.text}
+          </div>
+        )}
+      </div>
+
+      <RepresentationSidebar
+        reps={reps}
+        active={active}
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={() => setSidebarCollapsed((c) => !c)}
+        onSetActive={requestActive}
+        onSetVisibility={requestVisibility}
+        onDelete={requestDelete}
+      />
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Sidebar
+// ---------------------------------------------------------------------------
+
+type SidebarProps = {
+  reps:     RepSummary[];
+  active:   number;             // 1-based; 0 when empty
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+  onSetActive:     (i: number) => void;
+  onSetVisibility: (i: number, visible: boolean) => void;
+  onDelete:        (i: number) => void;
+};
+
+const SIDEBAR_W           = 240;
+const SIDEBAR_COLLAPSED_W = 28;
+
+const sidebarStyles = {
+  // The sidebar floats over the canvas instead of taking flex
+  // layout space. Two reasons: (a) the Babylon menu bar (HUD) uses
+  // pixel widths, so a narrower canvas clips it on the right; and
+  // (b) shrinking the canvas reframes the camera, which feels like a
+  // FOV jump when collapsing/expanding. With the overlay layout the
+  // canvas keeps full width and only some pixels of the 3D view get
+  // covered when the sidebar is expanded.
+  panel: (collapsed: boolean): React.CSSProperties => ({
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    width: collapsed ? SIDEBAR_COLLAPSED_W : SIDEBAR_W,
+    background: "rgba(20, 20, 24, 0.92)",
+    color: "white",
+    fontFamily: "system-ui, sans-serif",
+    fontSize: 12,
+    display: "flex",
+    flexDirection: "column",
+    borderLeft: "1px solid rgba(255,255,255,0.1)",
+    transition: "width 120ms ease-out",
+    overflow: "hidden",
+    zIndex: 15,
+  }),
+  header: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "8px 8px 8px 12px",
+    borderBottom: "1px solid rgba(255,255,255,0.08)",
+  } as React.CSSProperties,
+  headerTitle: {
+    fontWeight: 600,
+    letterSpacing: 0.2,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  } as React.CSSProperties,
+  iconButton: {
+    background: "transparent",
+    color: "white",
+    border: "none",
+    cursor: "pointer",
+    width: 22,
+    height: 22,
+    lineHeight: "22px",
+    padding: 0,
+    borderRadius: 3,
+    fontSize: 14,
+  } as React.CSSProperties,
+  list: {
+    flex: 1,
+    overflowY: "auto",
+    padding: "4px 0",
+  } as React.CSSProperties,
+  row: (isActive: boolean): React.CSSProperties => ({
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "6px 8px 6px 10px",
+    background: isActive ? "rgba(80, 140, 255, 0.18)" : "transparent",
+    borderLeft: isActive ? "3px solid #5aa0ff" : "3px solid transparent",
+    cursor: "pointer",
+  }),
+  rowLabel: {
+    flex: 1,
+    minWidth: 0,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  } as React.CSSProperties,
+  empty: {
+    padding: "12px 12px",
+    color: "rgba(255,255,255,0.55)",
+    fontStyle: "italic",
+  } as React.CSSProperties,
+};
+
+const RepresentationSidebar = (props: SidebarProps) => {
+  const { reps, active, collapsed, onToggleCollapsed,
+          onSetActive, onSetVisibility, onDelete } = props;
+
+  return (
+    <div style={sidebarStyles.panel(collapsed)} aria-label="Representations">
+      <div style={sidebarStyles.header}>
+        {!collapsed && <div style={sidebarStyles.headerTitle}>Representations</div>}
+        <button
+          onClick={onToggleCollapsed}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          style={sidebarStyles.iconButton}
+        >{collapsed ? "«" : "»"}</button>
+      </div>
+
+      {!collapsed && (
+        <div style={sidebarStyles.list}>
+          {reps.length === 0 && (
+            <div style={sidebarStyles.empty}>No representations</div>
+          )}
+          {reps.map((r, idx) => {
+            const i = idx + 1;
+            const isActive = i === active;
+            return (
+              <div
+                key={i}
+                style={sidebarStyles.row(isActive)}
+                onClick={() => { if (!isActive) onSetActive(i); }}
+                title={`Click to make active${isActive ? " (already active)" : ""}`}
+              >
+                <button
+                  onClick={(e) => { e.stopPropagation(); onSetVisibility(i, !r.visible); }}
+                  aria-label={r.visible ? "Hide" : "Show"}
+                  title={r.visible ? "Hide" : "Show"}
+                  style={{
+                    ...sidebarStyles.iconButton,
+                    opacity: r.visible ? 1 : 0.4,
+                  }}
+                >{r.visible ? "●" : "○"}</button>
+
+                <div style={sidebarStyles.rowLabel}>
+                  <div>{i}: {r.type}</div>
+                  <div style={{ fontSize: 10, opacity: 0.75 }}>
+                    {r.coloring}
+                    {(r.type === "SAS" || r.type === "SES") ? ` • ${r.density}` : ""}
+                  </div>
+                </div>
+
+                <button
+                  onClick={(e) => { e.stopPropagation(); onDelete(i); }}
+                  aria-label="Delete"
+                  title="Delete representation"
+                  style={sidebarStyles.iconButton}
+                >×</button>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

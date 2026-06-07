@@ -13,6 +13,44 @@ To install BiochemicalVisualization, open a Julia REPL, switch to the package mo
 pkg> add BiochemicalVisualization
 ```
 
+### JupyterLab — required Python dependency
+
+When you use BiochemicalVisualization inside a JupyterLab (or Jupyter
+Notebook) session, the rendered cell talks back to the Julia kernel
+over a WebSocket served by [Bonito.jl]. JupyterLab does not expose
+arbitrary kernel-side ports to the browser by default; the WebSocket
+has to be routed through **[jupyter-server-proxy]**.
+
+Install it into the same Python environment that runs JupyterLab:
+
+```bash
+pip install "jupyter-server-proxy>=4.5.0"
+```
+
+Restart JupyterLab afterwards. You can verify the extension is active
+with:
+
+```bash
+jupyter server extension list | grep server_proxy
+```
+
+Without `jupyter-server-proxy` the 3D view will appear but no model
+data ever reaches the browser — the connection looks broken because
+the WebSocket can't reach Julia.
+
+[Bonito.jl]: https://github.com/SimonDanisch/Bonito.jl
+[jupyter-server-proxy]: https://jupyter-server-proxy.readthedocs.io/
+
+### Troubleshooting: 403s on `/proxy/<port>/…`
+
+If the JupyterLab server log shows repeated `403 GET /proxy/<port>/…`
+warnings, the port baked into the page no longer points at the live
+Julia kernel — usually because a **previous kernel is still listening
+on that port** and Bonito picked a different one for the current
+session. Shut down the stale kernel ("Running" tab in JupyterLab →
+"Shut down" everything you don't need) and reload the notebook page;
+the new cell will be rendered with the now-correct port.
+
 ## Usage
 ```julia
 using BiochemicalAlgorithms, BiochemicalVisualization
