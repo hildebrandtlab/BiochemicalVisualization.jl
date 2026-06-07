@@ -3,20 +3,39 @@ import { AppContext } from "./SceneComponent";
 import { Vector3, Mesh, StandardMaterial, HighlightLayer, Color3, MeshBuilder, Color4, Tags, InstancedMesh, Quaternion, Space, VertexData } from "@babylonjs/core";
 
 
-const addRepresentation = (ctx: AppContext, data: any) => {
-    const mesh = renderRepresentation(ctx, data.representation);
-    mesh.children.forEach((child: Mesh|InstancedMesh) => {
-        ctx.scene.addMesh(child);
-        child.freezeWorldMatrix();
+// Build and attach meshes for every representation in `reps`. Each
+// mesh is tagged with its rep index in `.metadata.repIdx` so later
+// per-rep visibility / removal can walk ctx.meshes by that key.
+const renderScene = (ctx: AppContext, reps: any[]) => {
+    reps.forEach((dr: any, i: number) => {
+        const children = buildRepresentationMeshes(ctx, dr.repr, i);
+        const visible  = dr.visible !== false;
+        children.forEach((child: Mesh | InstancedMesh) => {
+            ctx.scene.addMesh(child);
+            // Hidden reps: hide visible meshes but leave the
+            // instance-source roots isVisible=false as built.
+            if (!visible && child.isVisible) child.isVisible = false;
+            child.freezeWorldMatrix();
+        });
+        ctx.meshes = ctx.meshes.concat(children);
     });
-    ctx.meshes = ctx.meshes.concat(mesh.children);
     ctx.engine.hideLoadingUI();
-}
+};
 
-const renderRepresentation = (ctx: AppContext, repr: any) => {
-    const meshes = { children: [] as (Mesh|InstancedMesh)[] };
-    const sphereMaterial = new StandardMaterial("sphereMaterial", ctx.scene);
-    const cylinderMaterial = new StandardMaterial("cylinderMaterial", ctx.scene);
+// Build meshes for a single Representation. `repIdx` is stored in
+// each mesh's metadata so a multi-rep scene can later toggle / delete
+// per rep. Highlight layer is allocated on the FIRST sphere-bearing
+// rep only — subsequent reps reuse `ctx.highlightMesh`, since picking
+// uses one shared highlight cursor regardless of which rep was hit.
+const buildRepresentationMeshes = (ctx: AppContext, repr: any, repIdx: number) => {
+    const children: (Mesh|InstancedMesh)[] = [];
+    const tagRep = (m: Mesh | InstancedMesh) => {
+        m.metadata = { ...(m.metadata ?? {}), repIdx };
+        return m;
+    };
+
+    const sphereMaterial = new StandardMaterial(`sphereMaterial_${repIdx}`, ctx.scene);
+    const cylinderMaterial = new StandardMaterial(`cylinderMaterial_${repIdx}`, ctx.scene);
     ctx.representationMaterials.push(sphereMaterial, cylinderMaterial);
 
     const sphere_colors          = repr.colors["sphere_colors"]           ?? [];
@@ -24,7 +43,7 @@ const renderRepresentation = (ctx: AppContext, repr: any) => {
     const spheres = repr.primitives["spheres"] ?? [];
     if (spheres.length > 0) {
         const root_sphere = MeshBuilder.CreateSphere(
-            "rootSphere",
+            `rootSphere_${repIdx}`,
             { diameter: 1.0, segments: 32 },
             ctx.scene
         );
@@ -32,15 +51,19 @@ const renderRepresentation = (ctx: AppContext, repr: any) => {
         root_sphere.material = sphereMaterial;
         root_sphere.registerInstancedBuffer("color", 4);
         root_sphere.isVisible = false;
-        meshes.children.push(root_sphere);
+        children.push(tagRep(root_sphere));
 
-        const highlight = new HighlightLayer("highlight", ctx.scene);
-        ctx.representationLayers.push(highlight);
-        ctx.highlightMesh = root_sphere.clone("highlightMesh");
-        if (ctx.highlightMesh) {
-            highlight.addMesh(ctx.highlightMesh, Color3.Blue());
-            ctx.highlightMesh.setEnabled(false);
-            meshes.children.push(ctx.highlightMesh);
+        // First rep with spheres owns the highlight layer; later reps
+        // share it via ctx.highlightMesh.
+        if (!ctx.highlightMesh) {
+            const highlight = new HighlightLayer("highlight", ctx.scene);
+            ctx.representationLayers.push(highlight);
+            ctx.highlightMesh = root_sphere.clone("highlightMesh");
+            if (ctx.highlightMesh) {
+                highlight.addMesh(ctx.highlightMesh, Color3.Blue());
+                ctx.highlightMesh.setEnabled(false);
+                children.push(tagRep(ctx.highlightMesh));
+            }
         }
 
         for (let i = 0; i < spheres.length; i++) {
@@ -52,6 +75,7 @@ const renderRepresentation = (ctx: AppContext, repr: any) => {
             instance.instancedBuffers.color = Color4.FromHexString(sphere_color);
             instance.billboardMode = 7;
             instance.metadata = {
+                repIdx,
                 meta: sphere_meta_data,
                 defaultColor: sphere_color,
                 qutemolColor: sphere_colors_qutemol[i],
@@ -61,7 +85,7 @@ const renderRepresentation = (ctx: AppContext, repr: any) => {
             Tags.AddTagsTo(instance, sphere_meta_data[1]);
             instance.isVisible = sphere_meta_data[1] === "H" ? ctx.hAtomsVisible : true;
 
-            meshes.children.push(instance);
+            children.push(instance);
         }
     }
 
@@ -71,14 +95,14 @@ const renderRepresentation = (ctx: AppContext, repr: any) => {
     const cylinders = repr.primitives["cylinders"] ?? [];
     if (cylinders.length > 0) {
         const root_cylinder = MeshBuilder.CreateCylinder(
-            "rootCylinder",
+            `rootCylinder_${repIdx}`,
             { diameter: 1.0, tessellation: 24, height: 1.0 },
             ctx.scene
         );
         root_cylinder.material = cylinderMaterial;
         root_cylinder.registerInstancedBuffer("color", 4);
         root_cylinder.isVisible = false;
-        meshes.children.push(root_cylinder);
+        children.push(tagRep(root_cylinder));
 
         for (let i = 0; i < cylinders.length; i++) {
             const isHBond = cylinder_h_flags[i] === true;
@@ -86,8 +110,9 @@ const renderRepresentation = (ctx: AppContext, repr: any) => {
                 cylinder_colors[i], cylinder_colors_qutemol[i],
                 cylinders[i], root_cylinder, isHBond
             );
+            instance.metadata = { ...(instance.metadata ?? {}), repIdx };
             instance.isVisible = isHBond ? ctx.hAtomsVisible : true;
-            meshes.children.push(instance);
+            children.push(instance);
         }
     }
 
@@ -95,26 +120,28 @@ const renderRepresentation = (ctx: AppContext, repr: any) => {
     // with per-vertex colors. Julia ships positions/normals as flat
     // float arrays, indices as flat int32, and one hex color per vertex.
     if (repr.mesh) {
-        const surfaceMesh = buildSurfaceMesh(ctx, repr.mesh);
-        if (surfaceMesh) meshes.children.push(surfaceMesh);
+        const surfaceMesh = buildSurfaceMesh(ctx, repr.mesh, repIdx);
+        if (surfaceMesh) children.push(surfaceMesh);
     }
 
-    return meshes;
-}
+    return children;
+};
 
 const buildSurfaceMesh = (
     ctx: AppContext,
     md: { positions: number[]; normals: number[]; indices: number[]; vertex_colors: string[] },
+    repIdx: number,
 ): Mesh | null => {
     if (!md.positions || md.positions.length === 0) return null;
 
-    const surfaceMaterial = new StandardMaterial("surfaceMaterial", ctx.scene);
+    const surfaceMaterial = new StandardMaterial(`surfaceMaterial_${repIdx}`, ctx.scene);
     surfaceMaterial.backFaceCulling = false;  // SAS/SES are open in tight pockets
     ctx.representationMaterials.push(surfaceMaterial);
 
-    const mesh = new Mesh("surfaceMesh", ctx.scene);
+    const mesh = new Mesh(`surfaceMesh_${repIdx}`, ctx.scene);
     mesh.isPickable = false;
     mesh.material = surfaceMaterial;
+    mesh.metadata = { repIdx };
 
     const vd = new VertexData();
     vd.positions = new Float32Array(md.positions);
@@ -181,6 +208,5 @@ const createCylinderInstance = (
 
 
 export {
-    addRepresentation,
-    renderRepresentation
+    renderScene,
 }
