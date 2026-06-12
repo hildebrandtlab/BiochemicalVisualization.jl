@@ -20,6 +20,12 @@ include("core/element_vdw_radii.jl")
 include("core/surface_coloring.jl")
 include("core/backbone_helpers.jl")
 include("core/point_filter.jl")
+# Splines: concrete types first, helper functions last (the helpers
+# reference the types).
+include("core/splines/Linear.jl")
+include("core/splines/CatmullRom.jl")
+include("core/splines/CubicB.jl")
+include("core/splines/SplineHelper.jl")
 include("core/representation.jl")
 include("core/visualize.jl")
 
