@@ -11,10 +11,17 @@
 //              around world-up. With a tilted view they're different
 //              axes; BALLView's behavior keeps the rotation aligned
 //              with the screen at all times.
-//                left  drag → orbit around camera-local up / right
-//                mid   drag → zoom by vertical drag
-//                right drag → pan
-//                wheel       → zoom
+//                left  drag           → orbit (camera-local up/right)
+//                mid   drag           → zoom  (vertical drag, down=closer)
+//                right drag           → translate (pan)
+//                shift + left drag    → zoom  (BALL shortcut)
+//                ctrl  + left drag    → translate (BALL shortcut)
+//                wheel                → zoom
+//              Pan is implemented by directly translating
+//              `camera.target` along the camera-local right / up axes,
+//              not via `inertialPanningX/Y`. The latter is only
+//              applied by Babylon's stock pointer input, which we
+//              detach in this mode.
 
 import { AppContext } from './SceneComponent';
 import {
@@ -33,9 +40,11 @@ export const mouseModeLabel = (m: MouseMode): string =>
 
 // Tuned by feel against BALLView's defaults (mouse_sensitivity_ = 5.0,
 // ROTATE_FACTOR = 50, TRANSLATE_FACTOR = 4). Rotate is radians per
-// pixel; pan matches Babylon's default panningSensibility of 1000.
+// pixel; pan is in world units per pixel, scaled by camera radius so a
+// drag covers the same fraction of the visible scene at any zoom
+// level.
 const ROTATE_SENS = 0.005;
-const PAN_SENS    = 1 / 1000;
+const PAN_SENS    = 0.0015;
 const ZOOM_SENS   = 0.005;
 
 const suppressContextMenu = (e: Event) => e.preventDefault();
@@ -80,11 +89,27 @@ export const applyMouseMode = (ctx: AppContext, mode: MouseMode) => {
         const qX        = new Quaternion();
         const qY        = new Quaternion();
         const qCombined = new Quaternion();
+        const panDelta  = new Vector3();
 
         let down   = false;
         let button = -1;
         let lastX  = 0;
         let lastY  = 0;
+
+        // Resolve the BALL action (rotate/zoom/translate) for a given
+        // mouse-button + modifier combination. Mirrors the switch in
+        // src/VIEW/KERNEL/MODES/rotateMode.C lines 60-78.
+        type Action = "rotate" | "zoom" | "translate" | null;
+        const actionFor = (btn: number, ev: PointerEvent): Action => {
+            if (btn === 2) return "translate";                    // right
+            if (btn === 1) return "zoom";                         // middle
+            if (btn === 0) {
+                if (ev.shiftKey) return "zoom";                   // shift+left
+                if (ev.ctrlKey || ev.metaKey) return "translate"; // ctrl+left (cmd on macOS)
+                return "rotate";                                  // plain left
+            }
+            return null;
+        };
 
         ctx.mouseObserver = ctx.scene.onPointerObservable.add((pi: PointerInfo) => {
             const e = pi.event as PointerEvent;
@@ -107,24 +132,27 @@ export const applyMouseMode = (ctx: AppContext, mode: MouseMode) => {
 
                     const camera = ctx.camera;
 
-                    if (button === 0) {
-                        // Orbit using the camera's CURRENT view-up and
-                        // view-right vectors as rotation axes (BALLView's
-                        // getLookUpVector() / getRightVector() in
-                        // scene.C). The world-up axis never enters, so
+                    // Camera-local basis: forward (target − position),
+                    // right (forward × upVector), viewUp (right ×
+                    // forward). Same vectors BALLView's
+                    // scene.C::getRightVector / getLookUpVector use.
+                    camera.target.subtractToRef(camera.position, forward);
+                    forward.normalize();
+                    Vector3.CrossToRef(forward, camera.upVector, right);
+                    right.normalize();
+                    Vector3.CrossToRef(right, forward, viewUp);
+                    viewUp.normalize();
+
+                    const action = actionFor(button, e);
+
+                    if (action === "rotate") {
+                        // Orbit around the camera-local axes so a
                         // horizontal drag stays aligned with screen-X
                         // regardless of tilt.
-                        camera.target.subtractToRef(camera.position, forward);
-                        forward.normalize();
-                        Vector3.CrossToRef(forward, camera.upVector, right);
-                        right.normalize();
-                        Vector3.CrossToRef(right, forward, viewUp);
-                        viewUp.normalize();
-
                         Quaternion.RotationAxisToRef(viewUp,  dx * ROTATE_SENS, qX);
-                        // Negate dy: BALLView convention is that dragging
-                        // the cursor *up* (dy < 0) rotates the molecule's
-                        // top *toward* the viewer.
+                        // Negate dy: BALLView convention — dragging
+                        // the cursor *up* (dy < 0) rotates the
+                        // molecule's top *toward* the viewer.
                         Quaternion.RotationAxisToRef(right,  -dy * ROTATE_SENS, qY);
                         qX.multiplyToRef(qY, qCombined);
 
@@ -134,22 +162,29 @@ export const applyMouseMode = (ctx: AppContext, mode: MouseMode) => {
                         offset.rotateByQuaternionToRef(qCombined, rotated);
 
                         // Rotate upVector too so ArcRotateCamera's
-                        // recompute of (alpha, beta) doesn't decide the
-                        // camera has gone over the pole.
+                        // recompute of (alpha, beta) doesn't decide
+                        // the camera has gone over the pole.
                         camera.upVector.rotateByQuaternionToRef(qCombined, newUp);
                         newUp.normalize();
                         camera.upVector = newUp;
 
                         camera.setPosition(camera.target.add(rotated));
-                    } else if (button === 1) {
-                        // Mid → zoom by vertical drag (down = closer).
+                    } else if (action === "zoom") {
+                        // Vertical drag, down = closer (matches BALL).
                         camera.inertialRadiusOffset -= dy * ZOOM_SENS * camera.radius;
-                    } else if (button === 2) {
-                        // Right → pan. inertialPanningX/Y are
-                        // camera-local, so the scene slides naturally
-                        // with the cursor.
-                        camera.inertialPanningX -= dx * PAN_SENS;
-                        camera.inertialPanningY += dy * PAN_SENS;
+                    } else if (action === "translate") {
+                        // Pan by directly shifting the target along the
+                        // camera-local right / up axes. Scale by radius
+                        // so a drag covers the same scene fraction at
+                        // any zoom level. Babylon's `inertialPanningX/Y`
+                        // would be cleaner but only ticks when the stock
+                        // pointer input is attached — which we detach in
+                        // this mode, so we apply the translation
+                        // directly here.
+                        panDelta.set(0, 0, 0);
+                        panDelta.addInPlace(right.scale(-dx * PAN_SENS * camera.radius));
+                        panDelta.addInPlace(viewUp.scale(dy * PAN_SENS * camera.radius));
+                        camera.target.addInPlace(panDelta);
                     }
                     break;
             }

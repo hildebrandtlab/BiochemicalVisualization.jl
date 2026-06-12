@@ -34,7 +34,7 @@ end
 function prepare_model(ac::AbstractAtomContainer;
         type="BALL_AND_STICK",
         probe_radius=1.5,
-        density=1.0,
+        density=_density_value("high"),
         coloring::AbstractString="element",
         solid_color::AbstractString="#cccccc")
     if type == "BALL_AND_STICK"
@@ -396,7 +396,9 @@ function display_model(
     type="BALL_AND_STICK",
     style="default",
     probe_radius=1.5,
-    density=1.0,
+    # Default matches BALL's DRAWING_PRECISION_HIGH (=2) → 6.5, i.e.
+    # what BALLView shows for a freshly added surface representation.
+    density=_density_value("high"),
     coloring::AbstractString="element",
     solid_color::AbstractString="#cccccc",
     width="80%",
@@ -440,7 +442,7 @@ end
 # scene, and makes it the active rep.
 function _push_model!(scene::Scene, ac::AbstractAtomContainer, type::AbstractString;
         probe_radius=1.5,
-        density=1.0,
+        density=_density_value("high"),
         coloring::AbstractString="element",
         solid_color::AbstractString="#cccccc")
     type_str = String(type)
