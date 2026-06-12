@@ -18,6 +18,8 @@ include("core/element_colors.jl")
 include("core/element_colors_qutemol.jl")
 include("core/element_vdw_radii.jl")
 include("core/surface_coloring.jl")
+include("core/backbone_helpers.jl")
+include("core/point_filter.jl")
 include("core/representation.jl")
 include("core/visualize.jl")
 
