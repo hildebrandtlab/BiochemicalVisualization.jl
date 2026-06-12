@@ -26,6 +26,7 @@ include("core/splines/Linear.jl")
 include("core/splines/CatmullRom.jl")
 include("core/splines/CubicB.jl")
 include("core/splines/SplineHelper.jl")
+include("core/frame_construction.jl")
 include("core/representation.jl")
 include("core/visualize.jl")
 
