@@ -37,6 +37,18 @@ function element_color(e)
     "#"*lowercase(_hex_colors[i])
 end
 
+# A Representation is empty when none of its primitive collections
+# carry anything and no surface mesh was attached. Used by
+# `display_model` to silently skip empty inputs (matches the old
+# pre-Scene contract).
+function _is_empty_representation(r::Representation)
+    isnothing(r.mesh) || return false
+    for v in values(r.primitives)
+        isempty(v) || return false
+    end
+    return true
+end
+
 function prepare_model(ac::AbstractAtomContainer;
         type="BALL_AND_STICK",
         probe_radius=1.5,
@@ -437,6 +449,11 @@ function display_model(
     initial_r = prepare_model(ac;
         type=type_str, probe_radius, density=density_value, coloring, solid_color)
     isnothing(initial_r) && return
+    # Empty input → empty Representation. Returning a Scene with no
+    # geometry produces a "scene has no displayable geometry" error
+    # later; return nothing so callers (notebooks, tests) treat the
+    # empty case as a silent no-op, matching the pre-Scene contract.
+    _is_empty_representation(initial_r) && return
 
     scene = Scene(style=style_str, width=width, height=height)
     push!(scene.representations, DisplayedRepresentation(
