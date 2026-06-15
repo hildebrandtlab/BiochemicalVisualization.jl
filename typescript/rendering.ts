@@ -6,9 +6,16 @@ import { Vector3, Mesh, StandardMaterial, HighlightLayer, Color3, MeshBuilder, C
 // Build and attach meshes for every representation in `reps`. Each
 // mesh is tagged with its rep index in `.metadata.repIdx` so later
 // per-rep visibility / removal can walk ctx.meshes by that key.
+// Model types whose surface mesh is a closed manifold (backbone
+// tubes). SAS/SES surfaces are open in tight pockets so we keep
+// backFaceCulling=false there; backbone tubes don't need both faces
+// drawn and look better with culling on.
+const CLOSED_SURFACE_TYPES = new Set(["BACKBONE", "RIBBON", "CARTOON"]);
+
 const renderScene = (ctx: AppContext, reps: any[]) => {
     reps.forEach((dr: any, i: number) => {
-        const children = buildRepresentationMeshes(ctx, dr.repr, i);
+        const closedSurface = CLOSED_SURFACE_TYPES.has(dr.type);
+        const children = buildRepresentationMeshes(ctx, dr.repr, i, closedSurface);
         const visible  = dr.visible !== false;
         children.forEach((child: Mesh | InstancedMesh) => {
             ctx.scene.addMesh(child);
@@ -27,7 +34,8 @@ const renderScene = (ctx: AppContext, reps: any[]) => {
 // per rep. Highlight layer is allocated on the FIRST sphere-bearing
 // rep only — subsequent reps reuse `ctx.highlightMesh`, since picking
 // uses one shared highlight cursor regardless of which rep was hit.
-const buildRepresentationMeshes = (ctx: AppContext, repr: any, repIdx: number) => {
+const buildRepresentationMeshes = (ctx: AppContext, repr: any, repIdx: number,
+                                   closedSurface: boolean = false) => {
     const children: (Mesh|InstancedMesh)[] = [];
     const tagRep = (m: Mesh | InstancedMesh) => {
         m.metadata = { ...(m.metadata ?? {}), repIdx };
@@ -120,7 +128,7 @@ const buildRepresentationMeshes = (ctx: AppContext, repr: any, repIdx: number) =
     // with per-vertex colors. Julia ships positions/normals as flat
     // float arrays, indices as flat int32, and one hex color per vertex.
     if (repr.mesh) {
-        const surfaceMesh = buildSurfaceMesh(ctx, repr.mesh, repIdx);
+        const surfaceMesh = buildSurfaceMesh(ctx, repr.mesh, repIdx, closedSurface);
         if (surfaceMesh) children.push(surfaceMesh);
     }
 
@@ -131,11 +139,15 @@ const buildSurfaceMesh = (
     ctx: AppContext,
     md: { positions: number[]; normals: number[]; indices: number[]; vertex_colors: string[] },
     repIdx: number,
+    closedSurface: boolean = false,
 ): Mesh | null => {
     if (!md.positions || md.positions.length === 0) return null;
 
     const surfaceMaterial = new StandardMaterial(`surfaceMaterial_${repIdx}`, ctx.scene);
-    surfaceMaterial.backFaceCulling = false;  // SAS/SES are open in tight pockets
+    // SAS/SES are open in tight pockets, so we need both faces drawn.
+    // Backbone / ribbon / cartoon tubes are closed manifolds where
+    // culling the back face is correct and cheaper.
+    surfaceMaterial.backFaceCulling = closedSurface;
     ctx.representationMaterials.push(surfaceMaterial);
 
     const mesh = new Mesh(`surfaceMesh_${repIdx}`, ctx.scene);
