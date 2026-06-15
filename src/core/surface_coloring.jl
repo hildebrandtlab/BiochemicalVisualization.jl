@@ -39,8 +39,11 @@ const _RESIDUE_COLORS = Dict(
 )
 const _RESIDUE_DEFAULT = (255, 255, 255)
 
-_rgb_to_hex(rgb::Tuple{Int, Int, Int}) =
-    "#" * lowercase(hex(RGB((rgb ./ 255)...)))
+# Surface-coloring callers historically used a private `_rgb_to_hex`
+# helper. It produced the same output as the public `rgb_to_hex` in
+# src/core/backbone_helpers.jl (lowercase 6-digit hex), so we route
+# through that one to keep a single source of truth.
+_rgb_to_hex(rgb::Tuple{Int, Int, Int}) = rgb_to_hex(rgb; prefix="#")
 
 # HSV → hex helper for the residue-index gradient. h in [0,1].
 function _hsv_hex(h::Real, s::Real=0.7, v::Real=1.0)
