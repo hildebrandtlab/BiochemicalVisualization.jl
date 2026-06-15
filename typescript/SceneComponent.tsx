@@ -51,8 +51,13 @@ type DebugText = {
   drawCallsCount: TextBlock,
 };
 
-export type ModelType = "BALL_AND_STICK" | "STICK" | "VAN_DER_WAALS" | "SAS" | "SES";
-export const MODEL_TYPES: ModelType[] = ["BALL_AND_STICK", "STICK", "VAN_DER_WAALS", "SAS", "SES"];
+export type ModelType =
+  | "BALL_AND_STICK" | "STICK" | "VAN_DER_WAALS" | "SAS" | "SES"
+  | "BACKBONE" | "RIBBON" | "CARTOON";
+export const MODEL_TYPES: ModelType[] = [
+  "BALL_AND_STICK", "STICK", "VAN_DER_WAALS", "SAS", "SES",
+  "BACKBONE", "RIBBON", "CARTOON",
+];
 
 export type ColoringMethod = "element" | "chain" | "residue" | "residue_index" | "solid";
 export const COLORING_METHODS: ColoringMethod[] =
@@ -302,7 +307,10 @@ const setupMenuBar = (ctx: AppContext) => {
     m === "STICK"          ? "Model: stick"      :
     m === "VAN_DER_WAALS"  ? "Model: vdW"        :
     m === "SAS"            ? "Model: SAS"        :
-                             "Model: SES";
+    m === "SES"            ? "Model: SES"        :
+    m === "BACKBONE"       ? "Model: backbone"   :
+    m === "RIBBON"         ? "Model: ribbon"     :
+                             "Model: cartoon";
   const modelBtn = makeButton(modelLabel(ctx.activeModel), () => {
     const i = MODEL_TYPES.indexOf(ctx.activeModel);
     const next = MODEL_TYPES[(i + 1) % MODEL_TYPES.length];
@@ -520,10 +528,12 @@ const setupPicking = (
 // Mirrors the wire fields from Julia's _serialize_rep, minus the heavy
 // `repr` payload which the sidebar doesn't need.
 type RepSummary = {
-  type:     ModelType;
-  coloring: ColoringMethod;
-  density:  DensityLevel;
-  visible:  boolean;
+  type:      ModelType;
+  coloring:  ColoringMethod;
+  density:   DensityLevel;
+  visible:   boolean;
+  alpha:     number;   // 0..1
+  wireframe: boolean;
 };
 
 export const SceneComponent = (props: SceneComponentProps) => {
@@ -584,10 +594,12 @@ export const SceneComponent = (props: SceneComponentProps) => {
     }
 
     setReps(reps.map(r => ({
-      type:     r.type,
-      coloring: r.coloring,
-      density:  r.density,
-      visible:  r.visible !== false,
+      type:      r.type,
+      coloring:  r.coloring,
+      density:   r.density,
+      visible:   r.visible !== false,
+      alpha:     typeof r.alpha === "number" ? r.alpha : 1,
+      wireframe: r.wireframe === true,
     })));
     setActive(newActive);
 
@@ -606,6 +618,12 @@ export const SceneComponent = (props: SceneComponentProps) => {
   const requestDelete     = (i: number) =>
     webComponentRef.current?.dispatchEvent(
       new CustomEvent("bv-request-delete", { detail: { rep: i } }));
+  const requestAlpha      = (i: number, alpha: number) =>
+    webComponentRef.current?.dispatchEvent(
+      new CustomEvent("bv-request-alpha", { detail: { rep: i, alpha } }));
+  const requestWireframe  = (i: number, wireframe: boolean) =>
+    webComponentRef.current?.dispatchEvent(
+      new CustomEvent("bv-request-wireframe", { detail: { rep: i, wireframe } }));
 
   const resizeHandler = () => {
     if (!context.current || !canvas.current || !canvasWrapperRef.current) return;
@@ -828,6 +846,8 @@ export const SceneComponent = (props: SceneComponentProps) => {
         onSetActive={requestActive}
         onSetVisibility={requestVisibility}
         onDelete={requestDelete}
+        onSetAlpha={requestAlpha}
+        onSetWireframe={requestWireframe}
       />
     </div>
   );
@@ -845,6 +865,8 @@ type SidebarProps = {
   onSetActive:     (i: number) => void;
   onSetVisibility: (i: number, visible: boolean) => void;
   onDelete:        (i: number) => void;
+  onSetAlpha:      (i: number, alpha: number) => void;
+  onSetWireframe:  (i: number, wireframe: boolean) => void;
 };
 
 const SIDEBAR_W           = 240;
@@ -931,7 +953,8 @@ const sidebarStyles = {
 
 const RepresentationSidebar = (props: SidebarProps) => {
   const { reps, active, collapsed, onToggleCollapsed,
-          onSetActive, onSetVisibility, onDelete } = props;
+          onSetActive, onSetVisibility, onDelete,
+          onSetAlpha, onSetWireframe } = props;
 
   return (
     <div style={sidebarStyles.panel(collapsed)} aria-label="Representations">
@@ -956,34 +979,74 @@ const RepresentationSidebar = (props: SidebarProps) => {
             return (
               <div
                 key={i}
-                style={sidebarStyles.row(isActive)}
+                style={{ ...sidebarStyles.row(isActive), flexDirection: "column", alignItems: "stretch" }}
                 onClick={() => { if (!isActive) onSetActive(i); }}
                 title={`Click to make active${isActive ? " (already active)" : ""}`}
               >
-                <button
-                  onClick={(e) => { e.stopPropagation(); onSetVisibility(i, !r.visible); }}
-                  aria-label={r.visible ? "Hide" : "Show"}
-                  title={r.visible ? "Hide" : "Show"}
-                  style={{
-                    ...sidebarStyles.iconButton,
-                    opacity: r.visible ? 1 : 0.4,
-                  }}
-                >{r.visible ? "●" : "○"}</button>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onSetVisibility(i, !r.visible); }}
+                    aria-label={r.visible ? "Hide" : "Show"}
+                    title={r.visible ? "Hide" : "Show"}
+                    style={{
+                      ...sidebarStyles.iconButton,
+                      opacity: r.visible ? 1 : 0.4,
+                    }}
+                  >{r.visible ? "●" : "○"}</button>
 
-                <div style={sidebarStyles.rowLabel}>
-                  <div>{i}: {r.type}</div>
-                  <div style={{ fontSize: 10, opacity: 0.75 }}>
-                    {r.coloring}
-                    {(r.type === "SAS" || r.type === "SES") ? ` • ${r.density}` : ""}
+                  <div style={sidebarStyles.rowLabel}>
+                    <div>{i}: {r.type}</div>
+                    <div style={{ fontSize: 10, opacity: 0.75 }}>
+                      {r.coloring}
+                      {(r.type === "SAS" || r.type === "SES") ? ` • ${r.density}` : ""}
+                    </div>
                   </div>
+
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onSetWireframe(i, !r.wireframe); }}
+                    aria-label={r.wireframe ? "Solid" : "Wireframe"}
+                    title={r.wireframe ? "Switch to solid" : "Switch to wireframe"}
+                    style={{
+                      ...sidebarStyles.iconButton,
+                      opacity: r.wireframe ? 1 : 0.55,
+                      fontSize: 11,
+                    }}
+                  >{r.wireframe ? "▦" : "■"}</button>
+
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onDelete(i); }}
+                    aria-label="Delete"
+                    title="Delete representation"
+                    style={sidebarStyles.iconButton}
+                  >×</button>
                 </div>
 
-                <button
-                  onClick={(e) => { e.stopPropagation(); onDelete(i); }}
-                  aria-label="Delete"
-                  title="Delete representation"
-                  style={sidebarStyles.iconButton}
-                >×</button>
+                {/* Alpha slider — full row width, only meaningful when the
+                    rep is visible; we keep it interactive either way so the
+                    user can preadjust before showing. */}
+                <div
+                  style={{
+                    display: "flex", alignItems: "center", gap: 6,
+                    paddingLeft: 28, paddingRight: 6,
+                    fontSize: 10, opacity: 0.85, marginTop: 2,
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <span style={{ width: 32 }}>opacity</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={r.alpha}
+                    onChange={(e) => onSetAlpha(i, parseFloat(e.target.value))}
+                    aria-label="Opacity"
+                    style={{ flex: 1, accentColor: "#5aa0ff" }}
+                  />
+                  <span style={{ width: 28, textAlign: "right" }}>
+                    {Math.round(r.alpha * 100)}%
+                  </span>
+                </div>
               </div>
             );
           })}

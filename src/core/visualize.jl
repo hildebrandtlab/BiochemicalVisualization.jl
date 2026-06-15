@@ -200,15 +200,18 @@ _build_repr(dr::DisplayedRepresentation) = prepare_model(dr.source;
     probe_radius=dr.probe_radius,
     density=_density_value(dr.density),
     coloring=dr.coloring,
-    solid_color=dr.solid_color)
+    solid_color=dr.solid_color,
+    backbone_kwargs=dr.backbone_kwargs)
 
 # Pack one rep for the wire — keep field order in sync with rendering.ts.
 _serialize_rep(dr::DisplayedRepresentation) = Dict(
-    "repr"     => dr.repr,
-    "type"     => dr.type,
-    "coloring" => dr.coloring,
-    "density"  => dr.density,
-    "visible"  => dr.visible,
+    "repr"      => dr.repr,
+    "type"      => dr.type,
+    "coloring"  => dr.coloring,
+    "density"   => dr.density,
+    "visible"   => dr.visible,
+    "alpha"     => dr.alpha,
+    "wireframe" => dr.wireframe,
 )
 _serialize_scene(scene::Scene) = Dict(
     "representations" => [_serialize_rep(dr) for dr in scene.representations],
@@ -238,6 +241,8 @@ function _build_scene_app(scene::Scene)
     coloring_request   = Observable{Any}(nothing)
     density_request    = Observable{Any}(nothing)
     visibility_request = Observable{Any}(nothing)
+    alpha_request      = Observable{Any}(nothing)
+    wireframe_request  = Observable{Any}(nothing)
     delete_request     = Observable{Any}(nothing)
     active_request     = Observable{Any}(nothing)
     scene_obs          = Observable{Any}(_serialize_scene(scene))
@@ -305,6 +310,26 @@ function _build_scene_app(scene::Scene)
         scene_obs[] = _serialize_scene(scene)
     end
 
+    on(alpha_request) do payload
+        payload isa AbstractDict || return
+        i = _resolve_rep_idx(payload)
+        i == 0 && return
+        # Clamp into [0,1]; bad input (NaN, strings, etc.) silently
+        # ignored — UI shouldn't deliver them, but we don't want a
+        # malformed payload to throw inside the Bonito handler.
+        a = try Float64(payload["alpha"]) catch; return end
+        scene.representations[i].alpha = clamp(a, 0.0, 1.0)
+        scene_obs[] = _serialize_scene(scene)
+    end
+
+    on(wireframe_request) do payload
+        payload isa AbstractDict || return
+        i = _resolve_rep_idx(payload)
+        i == 0 && return
+        scene.representations[i].wireframe = Bool(get(payload, "wireframe", false))
+        scene_obs[] = _serialize_scene(scene)
+    end
+
     on(delete_request) do payload
         payload isa AbstractDict || return
         i = _resolve_rep_idx(payload)
@@ -349,6 +374,8 @@ function _build_scene_app(scene::Scene)
                     const coloringReq   = $(coloring_request);
                     const densityReq    = $(density_request);
                     const visibilityReq = $(visibility_request);
+                    const alphaReq      = $(alpha_request);
+                    const wireframeReq  = $(wireframe_request);
                     const deleteReq     = $(delete_request);
                     const activeReq     = $(active_request);
                     const sceneObs      = $(scene_obs);
@@ -377,6 +404,8 @@ function _build_scene_app(scene::Scene)
                         scene_div.addEventListener("bv-request-coloring",   (e) => coloringReq.notify(e.detail));
                         scene_div.addEventListener("bv-request-density",    (e) => densityReq.notify(e.detail));
                         scene_div.addEventListener("bv-request-visibility", (e) => visibilityReq.notify(e.detail));
+                        scene_div.addEventListener("bv-request-alpha",      (e) => alphaReq.notify(e.detail));
+                        scene_div.addEventListener("bv-request-wireframe",  (e) => wireframeReq.notify(e.detail));
                         scene_div.addEventListener("bv-request-delete",     (e) => deleteReq.notify(e.detail));
                         scene_div.addEventListener("bv-request-active",     (e) => activeReq.notify(e.detail));
 
