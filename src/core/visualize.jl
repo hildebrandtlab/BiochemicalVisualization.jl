@@ -1,6 +1,12 @@
 export
+    backbone,
+    backbone!,
     ball_and_stick,
     ball_and_stick!,
+    cartoon,
+    cartoon!,
+    ribbon,
+    ribbon!,
     sas,
     sas!,
     Scene,
@@ -36,7 +42,8 @@ function prepare_model(ac::AbstractAtomContainer;
         probe_radius=1.5,
         density=_density_value("high"),
         coloring::AbstractString="element",
-        solid_color::AbstractString="#cccccc")
+        solid_color::AbstractString="#cccccc",
+        backbone_kwargs::NamedTuple=NamedTuple())
     if type == "BALL_AND_STICK"
         return prepare_ball_and_stick_model(ac)
     elseif type == "STICK"
@@ -47,13 +54,21 @@ function prepare_model(ac::AbstractAtomContainer;
         return prepare_sas_model(ac; probe_radius, density, coloring, solid_color)
     elseif type == "SES"
         return prepare_ses_model(ac; probe_radius, density, coloring, solid_color)
+    elseif type == "BACKBONE"
+        return prepare_backbone_model(ac; backbone_kwargs...)
+    elseif type == "RIBBON"
+        return prepare_ribbon_model(ac; backbone_kwargs...)
+    elseif type == "CARTOON"
+        return prepare_cartoon_model(ac; backbone_kwargs...)
     end
 
     return nothing
 end
 
 const VALID_RENDER_STYLES = ("default", "qutemol")
-const VALID_MODEL_TYPES   = ("BALL_AND_STICK", "STICK", "VAN_DER_WAALS", "SAS", "SES")
+const VALID_MODEL_TYPES   = ("BALL_AND_STICK", "STICK", "VAN_DER_WAALS", "SAS", "SES",
+                             "BACKBONE", "RIBBON", "CARTOON")
+const _BACKBONE_MODEL_TYPES = ("BACKBONE", "RIBBON", "CARTOON")
 
 # Discrete density levels exposed via the JS Density menu button.
 # `density` keyword still accepts an arbitrary `Real` for power users;
@@ -544,3 +559,92 @@ coloring / density / probe_radius semantics.
 """
 ses(ac; kwargs...)              = _scene_with(ac, "SES"; kwargs...)
 ses!(scene::Scene, ac; kwargs...) = _push_model!(scene, ac, "SES"; kwargs...)
+
+# ---- backbone / ribbon / cartoon ----
+#
+# These bypass `_push_model!` because their kwargs (tube_radius,
+# resolution_along, color tag, spline choice, ...) differ from the
+# atom / surface model kwargs `_push_model!` validates. The constructed
+# Representation still rides the same wire format — only Babylon's
+# backFaceCulling differs (the surface meshes here are closed tubes,
+# unlike SAS/SES which are open in tight pockets); see the TS side.
+#
+# The backbone-specific kwargs are stashed in `dr.backbone_kwargs` on
+# the DisplayedRepresentation so a future rebuild (e.g. when we add
+# menu-driven editing of tube_radius) can reconstruct the rep.
+
+function _push_backbone_like!(scene::Scene, ac::AbstractAtomContainer,
+                              type::AbstractString;
+                              kwargs...)
+    type_str = String(type)
+    type_str in _BACKBONE_MODEL_TYPES ||
+        throw(ArgumentError("type must be one of $(_BACKBONE_MODEL_TYPES), got: $type"))
+
+    repr = prepare_model(ac; type=type_str, backbone_kwargs=NamedTuple(kwargs))
+    isnothing(repr) && return scene
+
+    dr = DisplayedRepresentation(
+        repr, ac, type_str,
+        "element",                  # coloring — unused for backbone reps
+        _density_level(_density_value("high")),
+        Float64(1.5),               # probe_radius — unused
+        "#cccccc",                  # solid_color — unused
+        true,                       # visible
+        NamedTuple(kwargs),         # backbone-specific kwargs (see DisplayedRepresentation)
+    )
+    _push_representation!(scene, dr)
+    return scene
+end
+
+function _scene_with_backbone(ac, type;
+                              style="default", width="80%", height="60%", kwargs...)
+    style_str = String(string(style))
+    style_str in VALID_RENDER_STYLES ||
+        throw(ArgumentError("style must be one of $(VALID_RENDER_STYLES), got: $style"))
+    scene = Scene(style=style_str,
+                  width=String(string(width)),
+                  height=String(string(height)))
+    return _push_backbone_like!(scene, ac, type; kwargs...)
+end
+
+"""
+    backbone(ac; kwargs...) -> Scene
+    backbone!(scene, ac; kwargs...) -> Scene
+
+Sweep a circular tube along a spline through the backbone Cα atoms of
+each chain in `ac`. `kwargs` (forwarded to [`BackboneConfig`](@ref)):
+`tube_radius`, `resolution_along`, `resolution_cross`, `color`
+(`:uniform` / `:chain` / `:rainbow` / `:secondary_structure` / `:residue`),
+`spline` (`:linear` / `:catmull_rom` / `:cubic_b`),
+`control_point_strategy` (`:c_alpha` / `:mid_points`),
+`frame` (`:rmf` / `:second_spline`), `filter` (`:none` / `:angle`),
+`fixed_color::NTuple{3,Int}`.
+
+Originally implemented by Dorothee Brohl (see CONTRIBUTING.md).
+"""
+backbone(ac; kwargs...)                      = _scene_with_backbone(ac, "BACKBONE"; kwargs...)
+backbone!(scene::Scene, ac; kwargs...)       = _push_backbone_like!(scene, ac, "BACKBONE"; kwargs...)
+
+"""
+    ribbon(ac; kwargs...) -> Scene
+    ribbon!(scene, ac; kwargs...) -> Scene
+
+Carson-&-Bugg-style ribbon: an elliptical cross-section swept along a
+spline through the peptide-plane midpoints. See [`backbone`](@ref)
+for kwarg semantics; sensible ribbon defaults are applied
+automatically.
+"""
+ribbon(ac; kwargs...)                        = _scene_with_backbone(ac, "RIBBON"; kwargs...)
+ribbon!(scene::Scene, ac; kwargs...)         = _push_backbone_like!(scene, ac, "RIBBON"; kwargs...)
+
+"""
+    cartoon(ac; kwargs...) -> Scene
+    cartoon!(scene, ac; kwargs...) -> Scene
+
+Secondary-structure-aware cartoon: circular cross-section for coil,
+elliptical for helices, flat rectangular with arrow taper for strands.
+If `ac` has no secondary-structure assignment, BCA's
+`predict_secondary_structure!` is run automatically.
+"""
+cartoon(ac; kwargs...)                       = _scene_with_backbone(ac, "CARTOON"; kwargs...)
+cartoon!(scene::Scene, ac; kwargs...)        = _push_backbone_like!(scene, ac, "CARTOON"; kwargs...)

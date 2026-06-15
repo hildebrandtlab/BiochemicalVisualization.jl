@@ -37,6 +37,10 @@ include("models/sas.jl")
 include("models/ses.jl")
 include("models/stick.jl")
 include("models/van_der_waals.jl")
+# backbone_config (BackboneConfig + palette tables) must precede
+# backbone.jl, which references BackboneConfig in dispatch.
+include("models/backbone_config.jl")
+include("models/backbone.jl")
 
 # NOTE: we used to register an atexit hook to close the Bonito server
 # on kernel shutdown so the next kernel could reclaim the same port.
