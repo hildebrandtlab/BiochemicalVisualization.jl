@@ -73,6 +73,15 @@ ball_and_stick(sys)
 You have ideas for improvements, criticism, or ran into problems?  You are looking for a feature that you know from BALL?
 Feedback and contributions are very welcome. Check out our [guidelines](CONTRIBUTING.md) and use our [issue tracker](https://github.com/hildebrandtlab/BiochemicalVisualization.jl/issues) or contact us [via e-mail](mailto:hildebrandtlab@uni-mainz.de?subject=BiochemicalVisualization.jl).
 
+## Acknowledgements
+
+The backbone / ribbon / cartoon representations (and the supporting
+spline, frame-construction and mesh-stitching code in `src/core/`)
+were originally written by **Dorothee Brohl**
+(`dbrohl@students.uni-mainz.de`) in an earlier fork of this package
+and ported into the current architecture. Authorship is preserved in
+`git log` on every port commit.
+
 ## Citing
 If you use BiochemicalVisualization.jl in your research, please cite the following publication:
 > Leclaire et al., (2025). Structure-based bioinformatics with BiochemicalAlgorithms.jl.
