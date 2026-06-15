@@ -1,5 +1,5 @@
 # Regression tests for the backbone / ribbon / cartoon port. Covers
-# the pure helpers, the PlainMesh / TriangleMesh layer, and the
+# the pure helpers, the MeshBuilder / TriangleMesh layer, and the
 # BackboneConfig validation. End-to-end preparer behavior is exercised
 # in the manual JupyterLab smoke run (the algorithm depends on
 # secondary-structure assignment + atom-iteration order that fabricated
@@ -48,10 +48,10 @@ end
     @test count(==(-1), target) ≥ 1         # at least one flat sample dropped
 end
 
-@testitem "PlainMesh → TriangleMesh adapter" begin
-    using BiochemicalVisualization: PlainMesh, TriangleMesh
+@testitem "MeshBuilder → TriangleMesh adapter" begin
+    using BiochemicalVisualization: MeshBuilder, TriangleMesh
 
-    pm = PlainMesh{Float64}(
+    pm = MeshBuilder{Float64}(
         [0.0  1.0  0.5;
          0.0  0.0  1.0;
          0.0  0.0  0.0],
@@ -67,7 +67,7 @@ end
     @test length(tm.normals)         == 9
     @test tm.positions[1:3]           == [0.0, 0.0, 0.0]
     @test tm.positions[4:6]           == [1.0, 0.0, 0.0]
-    # 1-based PlainMesh connections become 0-based Int32 indices.
+    # 1-based MeshBuilder connections become 0-based Int32 indices.
     @test tm.indices                  == Int32[0, 1, 2]
     @test tm.vertex_colors            == ["#ff0000", "#00ff00", "#0000ff"]
 end

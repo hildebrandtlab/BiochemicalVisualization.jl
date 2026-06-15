@@ -28,7 +28,7 @@ include("core/splines/CubicB.jl")
 include("core/splines/SplineHelper.jl")
 include("core/frame_construction.jl")
 include("core/representation.jl")
-include("core/plain_mesh.jl")
+include("core/mesh_builder.jl")
 include("core/visualize.jl")
 
 include("models/ball_and_stick.jl")

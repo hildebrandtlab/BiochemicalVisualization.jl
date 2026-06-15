@@ -19,8 +19,8 @@
 #     `is_c_terminal(frag)` (current BCA exports these as helpers).
 #   * `Representation(spline_mesh)` → `Representation{T}(mesh =
 #     TriangleMesh(spline_mesh))` (current's wire-format type, with
-#     conversion from PlainMesh handled in src/core/plain_mesh.jl).
-#   * `handle_multichain_model` now returns a merged PlainMesh per
+#     conversion from MeshBuilder handled in src/core/mesh_builder.jl).
+#   * `handle_multichain_model` now returns a merged MeshBuilder per
 #     chain and lets the system entry wrap it once. The fork's
 #     per-chain `Representation` merging is gone with `Representation`'s
 #     structural changes.
@@ -223,7 +223,7 @@ the per-vertex colors for one sample of the spline into `result_mesh`
 at slot `idx`.
 """
 function generate_geometry_at_point!(
-        result_mesh::PlainMesh{T},
+        result_mesh::MeshBuilder{T},
         result_mesh_index::Int,
         point::AbstractVector{T},
         normal::AbstractVector{T},
@@ -285,7 +285,7 @@ end
 # cross-section (all `resolution_cross` vertices coincident) used to
 # splice a sudden color or shape change.
 function generate_geometry_at_point!(
-        result_mesh::PlainMesh{T},
+        result_mesh::MeshBuilder{T},
         result_mesh_index::Int,
         point::AbstractVector{T},
         tangent::AbstractVector{T},
@@ -333,7 +333,7 @@ function prepare_backbone_model(chain::Chain{T};
                                 kwargs...) where T<:Real
     config = BackboneConfig{T}(; kwargs...)
     _check_config!(config)
-    pm = _prepare_backbone_plain_mesh(chain, config, fixed_color)
+    pm = _prepare_backbone_mesh(chain, config, fixed_color)
     return Representation{T}(mesh = TriangleMesh(pm))
 end
 
@@ -354,7 +354,7 @@ function prepare_backbone_model(ac::System{T};
 
     chain_colors = (config.color == :chain) ? n_colors(length(chain_list)) : nothing
 
-    meshes = PlainMesh{T}[]
+    meshes = MeshBuilder{T}[]
     for (i, chain) in enumerate(chain_list)
         per_chain_fixed_color = fixed_color
         if config.color == :uniform && per_chain_fixed_color === nothing
@@ -364,7 +364,7 @@ function prepare_backbone_model(ac::System{T};
             per_chain_fixed_color = chain_colors[i]
         end
         try
-            push!(meshes, _prepare_backbone_plain_mesh(chain, config, per_chain_fixed_color))
+            push!(meshes, _prepare_backbone_mesh(chain, config, per_chain_fixed_color))
         catch e
             if e isa ErrorException && startswith(e.msg, "too few")
                 @debug "Skipped chain $(chain.name): $(e.msg)"
@@ -378,14 +378,14 @@ function prepare_backbone_model(ac::System{T};
     return Representation{T}(mesh = TriangleMesh(merged))
 end
 
-# ----- core algorithm: chain -> PlainMesh -----
+# ----- core algorithm: chain -> MeshBuilder -----
 
 # The heavy-lifting function. Builds the spline, samples it, builds
 # orthonormal frames, optionally inserts cartoon transition points,
 # optionally filters by curvature, then sweeps a cross-section through
-# every kept frame. Returns a `PlainMesh{T}` — the wrapper preparers
+# every kept frame. Returns a `MeshBuilder{T}` — the wrapper preparers
 # convert to TriangleMesh and wrap in a Representation.
-function _prepare_backbone_plain_mesh(chain::Chain{T}, config::BackboneConfig{T},
+function _prepare_backbone_mesh(chain::Chain{T}, config::BackboneConfig{T},
                                       fixed_color::Union{Nothing, NTuple{3, Int}}) where T<:Real
     fragment_list = collect(fragments(chain))
 
@@ -539,7 +539,7 @@ function _prepare_backbone_plain_mesh(chain::Chain{T}, config::BackboneConfig{T}
     # Allocate output mesh: one cross-section ring per kept frame +
     # one for each cartoon transition point + 2 end-cap vertices.
     num_vertices = (remaining_count + num_transition_points) * config.resolution_cross + 2
-    spline_mesh = PlainMesh{T}(
+    spline_mesh = MeshBuilder{T}(
         Matrix{T}(undef, 3, num_vertices),
         Matrix{T}(undef, 3, num_vertices),
         Matrix{Int}(undef, 3, 0),

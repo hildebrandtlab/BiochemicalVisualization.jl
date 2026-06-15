@@ -1,38 +1,47 @@
-# PlainMesh — the in-memory scratch type the backbone / ribbon /
-# cartoon pipeline builds geometry into. Stays internal to BCV; the
-# Bonito wire format uses `TriangleMesh` (defined in representation.jl),
-# which we produce via a one-pass adapter at the bottom of this file.
+# MeshBuilder — the in-memory scratch type the backbone / ribbon /
+# cartoon pipeline builds geometry into. **Internal to BCV** (not
+# exported); the Bonito wire format is `TriangleMesh` in
+# representation.jl, produced via the `TriangleMesh(::MeshBuilder)`
+# adapter at the bottom of this file.
+#
+# Why a separate type vs. building straight into TriangleMesh: the
+# build phase wants column-view slicing into 3×N matrices, 1-based Int
+# index arithmetic to match Julia loops, and cheap NTuple{3,Int}
+# colors that don't need a hex-encode per cross-section vertex. The
+# wire format wants flat Vector{T}, 0-based Int32 indices, and one
+# hex string per vertex (for direct Babylon ingestion). Using one
+# layout for building and another for emission keeps the algorithm
+# code readable and the wire format compact.
 #
 # Adapted from `src/helpers/meshes/PlainMesh.jl` and
-# `src/helpers/meshes/MeshHelpers.jl` in Dorothee Brohl's fork. Changes
-# from the originals:
-#
-#   - Dropped the `Meshes.SimpleMesh` constructors and the
-#     debug-aid `local_frame_mesh` / `local_arrow_mesh` helpers; both
-#     pulled in the `Meshes.jl` rendering stack which BCV does not
-#     depend on.
-#   - Added `TriangleMesh(::PlainMesh)` so the backbone preparers can
-#     emit the same wire-format surface mesh SAS/SES use, with the
-#     JS side needing no changes.
+# `src/helpers/meshes/MeshHelpers.jl` in Dorothee Brohl's fork (where
+# it was named `PlainMesh`); the original's `Meshes.SimpleMesh`
+# constructors and debug `local_frame_mesh` / `local_arrow_mesh`
+# helpers are dropped, since they pulled in the Meshes.jl rendering
+# stack which BCV doesn't depend on.
 
 """
-    PlainMesh{T}
+    MeshBuilder{T}
 
-In-memory triangle-mesh scratch type used while building backbone /
+Internal scratch triangle-mesh type used while building backbone /
 ribbon / cartoon geometry. Three rows per matrix, one column per
 vertex / face. Indices in `connections` are 1-based.
+
+Not exported; not part of the public BCV API. End-user mesh
+representations cross the wire as `TriangleMesh` (see
+[`Representation`](@ref)).
 """
-mutable struct PlainMesh{T<:Real}
+mutable struct MeshBuilder{T<:Real}
     vertices::Matrix{T}                  # 3 × N
     normals::Matrix{T}                   # 3 × N
     connections::Matrix{Int}             # 3 × F, 1-based triangle vertex indices
     colors::Vector{NTuple{3, Int}}       # length N
 end
 
-nvertices(m::PlainMesh)    = size(m.vertices, 2)
-nconnections(m::PlainMesh) = size(m.connections, 2)
+nvertices(m::MeshBuilder)    = size(m.vertices, 2)
+nconnections(m::MeshBuilder) = size(m.connections, 2)
 
-Base.:(==)(a::PlainMesh{T}, b::PlainMesh{U}) where {T, U} =
+Base.:(==)(a::MeshBuilder{T}, b::MeshBuilder{U}) where {T, U} =
     T == U && a.vertices == b.vertices && a.normals == b.normals &&
     a.connections == b.connections && a.colors == b.colors
 
@@ -176,20 +185,20 @@ end
 # ----- Mesh stitching + merging -----
 
 """
-    merge_meshes(meshes::AbstractVector{PlainMesh{T}}) -> PlainMesh{T}
+    merge_meshes(meshes::AbstractVector{MeshBuilder{T}}) -> MeshBuilder{T}
 
-Concatenate multiple `PlainMesh`es into one. The triangle indices of
+Concatenate multiple `MeshBuilder`s into one. The triangle indices of
 each input are shifted by the cumulative vertex count of the preceding
 inputs so the result references the right rows of the combined
 vertex array.
 """
-function merge_meshes(meshes::AbstractVector{PlainMesh{T}}) where T
+function merge_meshes(meshes::AbstractVector{MeshBuilder{T}}) where T
     points, normals, connects, colors = merge_meshes(
         map(m -> m.vertices,    meshes),
         map(m -> m.normals,     meshes),
         map(m -> m.connections, meshes),
         map(m -> m.colors,      meshes))
-    return PlainMesh{T}(points, normals, connects, colors)
+    return MeshBuilder{T}(points, normals, connects, colors)
 end
 
 function merge_meshes(vertex_list::AbstractVector{Matrix{T}},
@@ -228,7 +237,7 @@ Stitch a sequence of `ncircles` cross-section rings (each with
 vertices of `tube_mesh.vertices` are the start cap and end cap points
 respectively. Allocates `tube_mesh.connections`.
 """
-function add_faces_to_tube_mesh!(tube_mesh::PlainMesh{T}, resolution::Int, ncircles::Int) where T
+function add_faces_to_tube_mesh!(tube_mesh::MeshBuilder{T}, resolution::Int, ncircles::Int) where T
     if ncircles <= 0 || size(tube_mesh.vertices, 2) <= 0
         return
     end
@@ -277,17 +286,17 @@ function add_faces_to_tube_mesh!(tube_mesh::PlainMesh{T}, resolution::Int, ncirc
     tube_mesh.connections[3, connection_i:connection_i + resolution - 1] = repeat([start_point_index + 1], resolution)'
 end
 
-# ----- PlainMesh -> TriangleMesh adapter (wire format) -----
+# ----- MeshBuilder -> TriangleMesh adapter (wire format) -----
 
 """
-    TriangleMesh(::PlainMesh)
+    TriangleMesh(::MeshBuilder)
 
-Convert a `PlainMesh` (3×N matrices, 1-based Int indices, RGB tuple
+Convert a `MeshBuilder` (3×N matrices, 1-based Int indices, RGB tuple
 colors) into the flat wire-format `TriangleMesh` the JS renderer
 expects (flat `Vector{T}` of length 3N, 0-based `Int32` indices,
 per-vertex hex strings).
 """
-function TriangleMesh(m::PlainMesh{T}) where T<:Real
+function TriangleMesh(m::MeshBuilder{T}) where T<:Real
     n_verts = size(m.vertices, 2)
     n_faces = size(m.connections, 2)
 
@@ -304,7 +313,7 @@ function TriangleMesh(m::PlainMesh{T}) where T<:Real
 
     indices = Vector{Int32}(undef, 3 * n_faces)
     @inbounds for i in 1:n_faces
-        # PlainMesh stores 1-based connections; the wire format is
+        # MeshBuilder stores 1-based connections; the wire format is
         # 0-based to match Babylon's VertexData layout.
         indices[3i - 2] = Int32(m.connections[1, i] - 1)
         indices[3i - 1] = Int32(m.connections[2, i] - 1)
