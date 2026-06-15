@@ -13,7 +13,12 @@ import { Vector3, Mesh, StandardMaterial, HighlightLayer, Color3, MeshBuilder, C
 const CLOSED_SURFACE_TYPES = new Set(["BACKBONE", "RIBBON", "CARTOON"]);
 
 const renderScene = (ctx: AppContext, reps: any[]) => {
+    // Snapshot the material pool size BEFORE building each rep so we
+    // can apply per-rep alpha/wireframe to exactly the materials this
+    // rep just added (and no others).
     reps.forEach((dr: any, i: number) => {
+        const matStart = ctx.representationMaterials.length;
+
         const closedSurface = CLOSED_SURFACE_TYPES.has(dr.type);
         const children = buildRepresentationMeshes(ctx, dr.repr, i, closedSurface);
         const visible  = dr.visible !== false;
@@ -25,6 +30,21 @@ const renderScene = (ctx: AppContext, reps: any[]) => {
             child.freezeWorldMatrix();
         });
         ctx.meshes = ctx.meshes.concat(children);
+
+        // Apply per-rep visual overrides (alpha + wireframe). Both
+        // live on the StandardMaterials, so we just walk the freshly
+        // added slice of ctx.representationMaterials.
+        const alpha      = typeof dr.alpha === "number" ? dr.alpha : 1;
+        const wireframe  = dr.wireframe === true;
+        for (let j = matStart; j < ctx.representationMaterials.length; j++) {
+            const m = ctx.representationMaterials[j];
+            m.alpha     = alpha;
+            m.wireframe = wireframe;
+            // Babylon won't render transparent geometry correctly unless
+            // we explicitly mark it so; flagging needAlphaBlending only
+            // when alpha < 1 keeps the opaque fast path intact.
+            (m as any).transparencyMode = alpha < 1 ? 2 /* ALPHABLEND */ : 0 /* OPAQUE */;
+        }
     });
     ctx.engine.hideLoadingUI();
 };
