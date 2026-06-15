@@ -135,7 +135,19 @@ mutable struct DisplayedRepresentation{T<:Real}
     probe_radius::Real
     solid_color::String
     visible::Bool
+    # Type-specific kwargs that don't fit the surface-model fields
+    # above. Currently used by the backbone / ribbon / cartoon reps to
+    # remember their BackboneConfig kwargs across a rebuild. Empty
+    # NamedTuple by default; never serialized over the wire.
+    backbone_kwargs::NamedTuple
 end
+
+# Back-compat constructor: existing call sites that pass the 8
+# positional fields keep working; `backbone_kwargs` defaults to empty.
+DisplayedRepresentation(repr::Representation{T}, source, type, coloring, density,
+                        probe_radius, solid_color, visible) where {T} =
+    DisplayedRepresentation{T}(repr, source, type, coloring, density,
+                               probe_radius, solid_color, visible, NamedTuple())
 
 MsgPack.msgpack_type(::Type{DisplayedRepresentation{T}}) where {T} = MsgPack.StructType()
 
