@@ -3,6 +3,16 @@ function prepare_ball_and_stick_model(
         sphere_radius=T(0.4),
         stick_radius=T(0.2)) where {T<:Real}
 
+    # PDB files often don't carry bond records. Without an explicit
+    # `infer_topology!(sys)` (or `build_bonds!(...)`) call before
+    # ball_and_stick, `bonds(ac)` is empty and the user sees a
+    # spheres-only render with no obvious explanation. Warn once.
+    if nbonds(ac) == 0 && natoms(ac) > 0
+        @warn "ball_and_stick / stick rendered with no bonds — run " *
+              "`infer_topology!(sys)` (or `build_bonds!(sys, fdb)`) " *
+              "before the viz call to draw covalent connections." maxlog=1
+    end
+
     spheres = map(a -> _sphere(a.r, sphere_radius), atoms(ac))
     sphere_colors         = [element_color(e)         for e in atoms(ac).element]
     sphere_colors_qutemol = [element_color_qutemol(e) for e in atoms(ac).element]

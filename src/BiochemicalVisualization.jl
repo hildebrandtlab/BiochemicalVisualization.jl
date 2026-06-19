@@ -7,6 +7,7 @@ using Colors
 using GeometryBasics
 using LinearAlgebra
 using MsgPack
+using Sockets
 using Statistics
 
 import GeometryBasics: Sphere, Cylinder
@@ -51,20 +52,97 @@ include("models/backbone.jl")
 # coverage and triggered an LLVM-pass crash when JupyterLab's shutdown
 # timeout fired mid-JIT. Leave the cleanup to Bonito.
 
-# Make Bonito emit *path-relative* JupyterLab proxy URLs (no scheme,
-# no host) so the rendered cell resolves the proxy endpoint against
-# the page's own origin. Bonito's stock `jupyterlab_proxy_url`
-# constructs an absolute URL using `IJulia.profile["ip"]` (typically
-# `127.0.0.1`); if the user opens JupyterLab at `localhost:8888`, the
-# WebSocket and HTTP fetches go cross-origin to `127.0.0.1:8888`, the
-# JupyterLab auth cookie is dropped, and `jupyter-server-proxy`
-# returns 403 with no visible explanation. Returning a path lets the
-# browser fill in whatever scheme/host the user actually opened, so
-# either `localhost` or `127.0.0.1` works without configuration.
+# By default Bonito routes everything in JupyterLab through
+# `jupyter-server-proxy` (it sees `JPY_SESSION_NAME` in the env and
+# calls `jupyterlab_proxy_url`). That hop is only NECESSARY for remote
+# setups (JupyterHub on another host) where the browser can't reach
+# Bonito's own port — only the forwarded :8888 is reachable. For a
+# *local* JupyterLab everything is on `localhost`, so the browser can
+# open `ws://localhost:<bonito-port>/` directly. Bonito already
+# supports this: when `server.proxy_url` is empty, `relative_url` /
+# `online_url` fall back to `local_url`, which emits a direct
+# `http://localhost:<port>/...` (see Bonito HTTPServer/implementation.jl
+# local_url / online_url).
+#
+# We default to DIRECT (no proxy): it drops the jupyter-server-proxy
+# dependency entirely and removes the proxy hop, which is where the
+# interactive back-channel WebSocket was unreliable. Returning "" from
+# `jupyterlab_proxy_url` makes Bonito's `get_server` set
+# `server.proxy_url = ""` → direct local URLs.
+#
+# Browsers don't enforce same-origin on WebSockets, so a page served
+# from `localhost:8888` can open `ws://localhost:<port>/` without CORS
+# trouble. The one case where direct fails is HTTPS JupyterLab (a
+# `ws://` from an `https://` page is blocked as mixed content) or a
+# genuinely remote kernel — for those, set `BCV_JUPYTER_PROXY=1` to
+# restore the path-relative proxy URL.
 function Bonito.jupyterlab_proxy_url(port::Integer)
-    config = Bonito.jupyter_running_servers()
-    base_url = isnothing(config) ? "/" : config[1]["base_url"]
-    return string(base_url, "proxy/", port)
+    if haskey(ENV, "BCV_JUPYTER_PROXY")
+        # Opt-in proxy mode for remote / HTTPS JupyterLab. Path-relative
+        # so the browser resolves it against the page's own origin
+        # (works whether the user opened localhost or 127.0.0.1).
+        config = Bonito.jupyter_running_servers()
+        base_url = isnothing(config) ? "/" : config[1]["base_url"]
+        return string(base_url, "proxy/", port)
+    end
+    # Direct/local mode (default): empty string → Bonito emits
+    # ws://localhost:<port>/ and the browser connects straight to the
+    # Bonito server with no proxy.
+    return ""
+end
+
+function __init__()
+    # Pick a fresh ephemeral port for this kernel BEFORE we let Bonito
+    # decide. Bonito's default is a fixed 9384 with sequential fallback
+    # (try_listen() catches UV_EADDRINUSE and increments). That works
+    # for the first kernel but degrades badly on a workstation that
+    # accumulates zombie IJulia processes — each kernel that crashes
+    # (force-kill, OOM, heartbeat timeout) leaves a Julia process alive
+    # holding its Bonito port. Bonito's own atexit-based cleanup only
+    # fires on graceful exit, so the next kernel has to walk the
+    # fallback ladder past every zombie, takes 4+ retries to bind, and
+    # in some failure modes ends up serving from a port the proxy
+    # mapping isn't aware of.
+    #
+    # We can't pass `listen_port=0` and let HTTP.listen! pick: Bonito's
+    # `try_listen` (Bonito/src/HTTPServer/implementation.jl:325-340)
+    # returns the literal port argument it was passed instead of
+    # reading the OS-assigned port back from the HTTP server, so port 0
+    # produces server.port = 0 and broken `/proxy/0/...` URLs. Instead
+    # we bind our own TCP listener on port 0, read the ephemeral port
+    # the OS handed us, close, and pass that fixed number to Bonito.
+    # The race window between our close() and Bonito's HTTP.listen! is
+    # tiny on macOS/Linux; if another process does snatch it, Bonito's
+    # try_listen fallback picks the next free port — exactly what it
+    # was designed for.
+    Bonito.configure_server!(listen_port = _pick_ephemeral_port())
+
+    # Asset serving: leave Bonito on its IJulia default, `NoServer`.
+    # NoServer inlines every asset into the cell HTML. That's exactly
+    # what makes the interactive back-channel work in JupyterLab: the
+    # session bootstrap and the modules it depends on (notably the
+    # `Websocket` module that opens the back-channel socket) are
+    # delivered inline and run immediately. Under `HTTPAssetServer`
+    # those are fetched by URL/processed via a path JupyterLab's output
+    # renderer doesn't drive to completion, the session WebSocket never
+    # opens, and `notify()` from the sliders/menu reaches nothing — a
+    # dead UI. (Two distinct upstream Bonito bugs underlie this; see the
+    # project's upstream-PR notes.)
+    #
+    # NoServer's only downside is that it would base64-inline our ~7 MB
+    # JS bundle into the first scene cell (~12.5 MB of notebook output →
+    # the browser stalls). We avoid that WITHOUT leaving NoServer by
+    # serving just that one bundle from a stable HTTP route and importing
+    # it by URL; everything else stays inlined. See `_visualize()` in
+    # core/visualize.jl. Net: first scene cell ~280 KB, back-channel
+    # alive.
+end
+
+function _pick_ephemeral_port()
+    sock = Sockets.listen(Sockets.ip"127.0.0.1", 0)
+    port = Int(Sockets.getsockname(sock)[2])
+    close(sock)
+    return port
 end
 
 end # module BiochemicalVisualization

@@ -357,11 +357,15 @@ async def run_main(args) -> int:
         log(f"  → all WebSocket URLs ({len(c.ws_opens)}):")
         for u in c.ws_opens:
             log(f"      {u}")
-        # Anything routing through /proxy/<port>/ or directly to a non-kernel
-        # port is potentially Bonito's. The kernel WS is /api/kernels/.
-        bv_ws = [u for u in c.ws_opens
-                 if "/proxy/" in u or ("/api/kernels/" not in u and ":9384" in u)]
+        # A Bonito session WebSocket is any ws:// that is NOT one of
+        # JupyterLab's own (/api/kernels/, /api/events/). In proxy mode
+        # it routes through /proxy/<port>/<session-uuid>; in direct mode
+        # it's ws://localhost:<ephemeral-port>/<session-uuid>. Either
+        # way it lacks the /api/ path JupyterLab uses.
+        bv_ws = [u for u in c.ws_opens if "/api/" not in u]
         log(f"  → Bonito-candidate WebSocket opens: {len(bv_ws)}")
+        for u in bv_ws:
+            log(f"      bonito-ws: {u}")
         log(f"  → WS frames sent: {c.ws_frames_sent}, received: {c.ws_frames_recv}")
         # Only fail on frames if we identified a Bonito WS but no frames flowed.
         if bv_ws and c.ws_frames_recv == 0:
@@ -388,9 +392,28 @@ async def run_main(args) -> int:
             results = []
             for i, div_id in enumerate(div_ids):
                 log(f"  → probing scene {i+1}/{len(div_ids)}: {div_id}")
-                before = c.ws_frames_recv
-                # Cycle Model to a different target so it actually triggers a rebuild
-                target = "VAN_DER_WAALS" if i % 2 == 0 else "STICK"
+                # REAL round-trip signal: dispatch a model switch and wait
+                # for the rebuilt scene to come BACK from Julia and re-render
+                # — observed via the representation sidebar, whose active row
+                # shows "<i>: <TYPE>". We must NOT count received WS frames:
+                # Bonito sends periodic ping frames, so frame-counting passes
+                # even when the back-channel is completely dead. We read the
+                # rep type straight from the rendered DOM, so this only
+                # succeeds on a genuine Julia → JS round-trip + re-render.
+                async def _types_in(div: str) -> list:
+                    return await page.evaluate(
+                        """(id) => {
+                          const root = document.getElementById(id);
+                          if (!root) return [];
+                          return [...root.querySelectorAll('div')]
+                            .map(d => (d.textContent || '').match(/^\\d+:\\s*([A-Z_]+)$/))
+                            .filter(Boolean).map(m => m[1]);
+                        }""", div)
+                # Pick a target type NOT currently shown, so success
+                # requires a genuine change (no false positive from
+                # re-requesting the type already displayed).
+                before = await _types_in(div_id)
+                target = "STICK" if "STICK" not in before else "VAN_DER_WAALS"
                 ok = await page.evaluate(
                     """({id, t}) => {
                       const div = document.getElementById(id);
@@ -402,26 +425,31 @@ async def run_main(args) -> int:
                     {"id": div_id, "t": target},
                 )
                 if not ok:
-                    results.append((div_id, False, 0))
+                    results.append((div_id, False, "div not found"))
                     continue
                 deadline = time.time() + 10
-                while time.time() < deadline and c.ws_frames_recv == before:
+                got = False
+                while time.time() < deadline:
+                    if target in await _types_in(div_id):
+                        got = True
+                        break
                     await asyncio.sleep(0.2)
-                delta = c.ws_frames_recv - before
-                results.append((div_id, delta > 0, delta))
+                results.append((div_id, got,
+                                f"rep→{target}" if got else f"rep never became {target}"))
                 log(f"  → scene {i+1}: dispatched type={target}, "
-                    f"{'OK' if delta > 0 else 'NO REPLY'} ({delta} new frame(s))")
-                # Wait between dispatches; rapid-fire seems to overwhelm
-                # the proxy/Bonito message flow on the proxy path.
+                    f"{'OK (scene rebuilt)' if got else 'NO REPLY (back-channel dead)'}")
+                # Space out dispatches so a slow rebuild from one doesn't
+                # bleed into the next probe's window.
                 await asyncio.sleep(3.0)
 
             ok_count = sum(1 for r in results if r[1])
             log(f"  → summary: {ok_count}/{len(results)} dispatches round-tripped")
-            for i, (div_id, ok, delta) in enumerate(results):
-                log(f"      step {i+1}: {div_id} → {'OK' if ok else 'NO REPLY'} ({delta} frames)")
+            for i, (div_id, ok, detail) in enumerate(results):
+                log(f"      step {i+1}: {div_id} → {'OK' if ok else 'NO REPLY'} ({detail})")
             if ok_count < len(results):
                 failures.append(
-                    f"only {ok_count}/{len(results)} dispatches round-tripped to Julia"
+                    f"only {ok_count}/{len(results)} dispatches round-tripped to Julia "
+                    f"(measured via [BCV-DIAG] update.applied, not ping frames)"
                 )
 
         if failures:

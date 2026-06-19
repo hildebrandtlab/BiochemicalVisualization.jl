@@ -24,7 +24,54 @@ const _VISUALIZE_BUNDLE = asset_path("../typescript/dist/biochemicalvisualizatio
 # Without this, rebuilding the bundle (`npm run build`) does NOT
 # invalidate BCV's precompile cache and Bonito keeps serving stale JS.
 include_dependency(_VISUALIZE_BUNDLE)
-const VISUALIZE = ES6Module(_VISUALIZE_BUNDLE)::Asset
+# Local module asset (carries the bundle bytes + content hash). Under a
+# normal Bonito asset server (REPL / standalone) this is served by URL
+# directly. Under IJulia, Bonito defaults to `NoServer`, which would
+# base64-inline this ~7 MB bundle into the FIRST scene cell (~12.5 MB of
+# notebook output → browser stalls). See `_visualize()` for how we avoid
+# that by serving just this bundle from a stable HTTP route while letting
+# NoServer inline the small connection-critical assets (which is what
+# keeps the interactive WebSocket working — see the note in __init__).
+const VISUALIZE_LOCAL = ES6Module(_VISUALIZE_BUNDLE)::Asset
+
+# Lazily-built, kept-alive HTTPAssetServer route that serves the bundle
+# by URL even while sessions use NoServer, plus the online ES6Module
+# pointing at it. Both are created on first use (when the Bonito server
+# and its proxy URL are known) and never torn down, so the bundle URL
+# stays valid for the kernel's lifetime.
+const _BUNDLE_ASSET_SERVER = Ref{Any}(nothing)
+const _VISUALIZE_ONLINE    = Ref{Any}(nothing)
+
+# True when we're rendering for offline/static export (Page(offline=true)
+# forces the NoConnection type). There, the bundle MUST be inlined so the
+# exported HTML is self-contained — don't externalize.
+_is_offline_export() = Bonito.FORCED_CONNECTION[] === Bonito.NoConnection
+
+"""
+    _visualize() -> Asset
+
+The bundle asset to interpolate into a scene's JS. Externalizes the
+bundle to a stable HTTP URL ONLY when it would otherwise be inlined by
+NoServer (i.e. under IJulia, interactive). For the REPL/standalone path
+Bonito already serves the local asset by URL, and for offline export we
+want it inlined — both return the local asset.
+"""
+function _visualize()
+    (isdefined(Main, :IJulia) && !_is_offline_export()) || return VISUALIZE_LOCAL
+    if isnothing(_VISUALIZE_ONLINE[])
+        # Register a permanent HTTPAssetServer route on the (already
+        # running, used for the WebSocket) global server. `url(...)`
+        # registers the bundle and returns a proxy-aware URL
+        # (direct localhost, or the jupyter-server-proxy path when
+        # BCV_JUPYTER_PROXY is set). We keep the ChildAssetServer in a
+        # module Ref so its objectid ref keeps the file registered.
+        server = Bonito.HTTPAssetServer()
+        bundle_url = Bonito.url(server, VISUALIZE_LOCAL)
+        _BUNDLE_ASSET_SERVER[] = server
+        _VISUALIZE_ONLINE[]    = Bonito.ES6Module(bundle_url)
+    end
+    return _VISUALIZE_ONLINE[]
+end
 
 const _hex_colors = [hex(RGB((e ./ 255)...)) for e in ELEMENT_COLORS]
 
@@ -136,7 +183,7 @@ function _maybe_dedup_visualize_asset!(session)
         _LAST_ROOT[] = root
         return
     end
-    push!(root.imports, VISUALIZE)
+    push!(root.imports, _visualize())
     return
 end
 
@@ -357,11 +404,12 @@ function _build_scene_app(scene::Scene)
     scene_id     = _next_scene_id()
     scene_div_id = scene_id * "-div"
 
+    visualize_asset = _visualize()
     App() do session::Session
         _maybe_dedup_visualize_asset!(session)
         Bonito.onload(session, dom, js"""
             function (container){
-                $(VISUALIZE).then(VISUALIZE => {
+                $(visualize_asset).then(VISUALIZE => {
                     parent = $dom.parentNode;
                     parent.style.height = '100vh';
 
@@ -434,6 +482,29 @@ end
 # and the `invoke(...)` route into Base.show with signature
 # (::IO, ::MIME, ::Any) is itself ambiguous across many packages'
 # specialized methods. Per-MIME definitions keep dispatch unambiguous.
+#
+# DON'T memoize the App. IJulia calls `show` once per MIME we declare
+# ourselves showable for; Bonito creates a fresh sub-session per show.
+# An earlier version of this file cached the App per Scene to avoid
+# rebuilding it 4× (one per MIME), but that breaks Bonito's per-session
+# Observable caching: the first sub-session emits the full
+# RegisterObservable message for each `$(observable)` interpolation,
+# and the subsequent sub-sessions emit only a TrackingOnly reference
+# (Bonito/src/serialization/caching.jl:add_cached! line 122-126). When
+# JupyterLab renders one MIME and discards the others, the rendered
+# MIME's session may not be the one that owned the original
+# registration — its JS-side observable map then has no entry for the
+# id, every `$(alpha_request)`/`$(scene_obs)`/… interpolates as `null`,
+# and the back-channel silently dies. Initial state still works because
+# it's a value interpolation, not an Observable reference.
+#
+# A fresh App per show means each sub-session gets its own Observable
+# set with a full registration — cheap (~600 B per show with
+# HTTPAssetServer), correct, and the original "kernel-crashing 4×
+# repetition" concern was a symptom of NoServer's 12 MB inline
+# payloads, not the App construction itself. With
+# `force_asset_server!(HTTPAssetServer)` (in our __init__), 4× ~600 B
+# = ~2.4 KB per cell display.
 for _mime in (MIME"text/html",
               MIME"application/prs.juno.plotpane+html",
               MIME"juliavscode/html",
@@ -441,6 +512,17 @@ for _mime in (MIME"text/html",
     @eval Base.showable(::$_mime, ::Scene) = true
     @eval Base.show(io::IO, mime::$_mime, scene::Scene) =
         show(io, mime, _build_scene_app(scene))
+end
+
+# REPL / scripted use: `stick(sys)` etc. now return a Scene, but
+# Bonito's browser-display routes on `App`, not Scene, so the
+# auto-open-in-browser behavior stopped firing. Forward Scene to its
+# underlying App so Bonito's existing display paths (BrowserDisplay
+# + ElectronDisplay) keep working unchanged.
+for _DT in (Bonito.HTTPServer.BrowserDisplay,
+            Bonito.HTTPServer.ElectronDisplay)
+    @eval Base.display(d::$_DT, scene::Scene) =
+        Base.display(d, _build_scene_app(scene))
 end
 
 # -----------------------------------------------------------------------------

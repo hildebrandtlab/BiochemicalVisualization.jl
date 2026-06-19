@@ -80,6 +80,7 @@ export type AppControls = {
   setLightingMode: (mode: LightingMode) => void,
   setMouseMode: (mode: MouseMode) => void,
   takeScreenshot: () => void,
+  syncActiveLabels: (model: ModelType, coloring: ColoringMethod, density: DensityLevel) => void,
 };
 
 export type AppContext = {
@@ -186,8 +187,24 @@ const setupLights = (scene: Scene, camera: ArcRotateCamera) => {
 // with multiple plots. Re-add behind a flag if VR display ever
 // becomes a target.
 
+// Babylon's AdvancedDynamicTexture renders into the engine's backbuffer
+// pixel grid by default. With adaptToDeviceRatio:true on a retina
+// display the backbuffer is 2× the canvas CSS pixels — so anything
+// sized in "Xpx" (button widths, font sizes, …) takes half as much CSS
+// space as expected, producing the "unreadably small HUD" the user
+// hit. Setting idealWidth/Height to the canvas's CSS dimensions makes
+// the UI coordinate space match CSS pixels regardless of DPR.
+const _scaleUIToCSS = (ui: AdvancedDynamicTexture, engine: Engine) => {
+  const canvas = engine.getRenderingCanvas();
+  if (!canvas) return;
+  ui.idealWidth  = canvas.clientWidth;
+  ui.idealHeight = canvas.clientHeight;
+  ui.useSmallestIdeal = true;
+};
+
 const setupHUD = (scene: Scene): { panel: StackPanel, debugText: DebugText } => {
   const ui = AdvancedDynamicTexture.CreateFullscreenUI("hud", true, scene);
+  _scaleUIToCSS(ui, scene.getEngine() as Engine);
 
   const panel = new StackPanel();
   panel.adaptWidthToChildren = false;
@@ -253,6 +270,7 @@ const setupInstrumentation = (
 
 const setupMenuBar = (ctx: AppContext) => {
   const ui = AdvancedDynamicTexture.CreateFullscreenUI("menubar", true, ctx.scene);
+  _scaleUIToCSS(ui, ctx.engine);
 
   const bar = new StackPanel();
   bar.isVertical = false;
@@ -433,6 +451,17 @@ const setupMenuBar = (ctx: AppContext) => {
     takeScreenshot: () => {
       Tools.CreateScreenshot(ctx.engine, ctx.camera, { precision: 2 });
     },
+
+    // Update the model/coloring/density button labels from the
+    // active rep WITHOUT dispatching back to Julia. Used by update()
+    // when a new scene_obs lands so the menu reflects the current
+    // active rep — e.g. after `stick(sys)` the menu shows
+    // "Model: stick" instead of the initial "Model: ball+stick".
+    syncActiveLabels: (model: ModelType, coloring: ColoringMethod, density: DensityLevel) => {
+      modelBtn.text.text    = modelLabel(model);
+      coloringBtn.text.text = coloringLabel(coloring);
+      densityBtn.text.text  = densityLabel(density);
+    },
   };
 };
 
@@ -548,11 +577,27 @@ export const SceneComponent = (props: SceneComponentProps) => {
   const [active, setActive] = useState<number>(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   // Connection-health watchdog: if the first scene state hasn't
-  // arrived within CONNECTION_TIMEOUT_MS, surface a visible banner so
-  // the user notices a dead WebSocket (typical cause: page was
-  // rendered against a port that's no longer the kernel's port).
-  const [connectionLost, setConnectionLost] = useState<boolean>(false);
+  // arrived within a short window, show a visible banner so the user
+  // knows something's amiss. Two stages:
+  //   0 = silent (data arrived, or still in the grace window).
+  //   1 = "Waiting for Julia kernel…" — subtle, kernel may just be
+  //       precompiling. Fires after CONNECTION_WAIT_MS.
+  //   2 = "Connection seems stuck — recovery steps below." Loud,
+  //       red, includes the recovery checklist. Fires after
+  //       CONNECTION_HELP_MS without data.
+  // Both clear immediately on the first valid scene event.
+  const [waitStage, setWaitStage] = useState<0 | 1 | 2>(0);
   const receivedDataRef = useRef<boolean>(false);
+  // Engine + cancellation refs are tracked outside `context` because
+  // `context.current` is only populated late in the async `init()`.
+  // If unmount fires before that assignment (React StrictMode does
+  // this routinely; JupyterLab's "Run All" → rapid cell remount
+  // produces the same race), the cleanup can't reach the Engine and
+  // it leaks a WebGL context. Browsers cap WebGL contexts (Chrome
+  // ~16) and exceeding the cap → renderer crash ("Aw, snap!"). Keep
+  // the Engine in a ref so cleanup is unconditional.
+  const engineRef     = useRef<Engine | null>(null);
+  const initAbortedRef = useRef<boolean>(false);
 
   // Handle a full scene state shipped from Julia. Wire format is
   //   { representations: [{ repr, type, coloring, density, visible }, ...], active: 1-based }
@@ -565,7 +610,7 @@ export const SceneComponent = (props: SceneComponentProps) => {
     // First state from Julia: the WebSocket round-trip is alive. Clear
     // any pending "disconnected" banner.
     receivedDataRef.current = true;
-    setConnectionLost(false);
+    setWaitStage(0);
 
     const reps: any[] = data.representations;
     const newActive = typeof data.active === "number" ? data.active : 0;
@@ -591,6 +636,15 @@ export const SceneComponent = (props: SceneComponentProps) => {
       if (DENSITY_LEVELS.includes(activeRep.density)) {
         context.current.activeDensity = activeRep.density as DensityLevel;
       }
+      // Push the active rep's settings into the menu bar so the labels
+      // match the rendered scene — covers both the initial render
+      // (e.g. `stick(sys)` → menu starts at "Model: stick") and every
+      // subsequent Julia → JS push.
+      context.current.controls?.syncActiveLabels(
+        context.current.activeModel,
+        context.current.activeColoring,
+        context.current.activeDensity,
+      );
     }
 
     setReps(reps.map(r => ({
@@ -644,8 +698,37 @@ export const SceneComponent = (props: SceneComponentProps) => {
 
   const init = async () => {
     if (!canvas.current || !webComponentRef.current) return;
+    // Bail out early if React already unmounted us before init began.
+    if (initAbortedRef.current) return;
 
-    const engine = new Engine(canvas.current, true);
+    // Engine options.
+    //   - adaptToDeviceRatio MUST be true: on retina, Babylon's HUD
+    //     (StackPanel sized at "320px") is measured against the
+    //     backbuffer; a CSS-pixel backbuffer makes the menu overflow
+    //     and the top toolbar gets cropped.
+    //   - stencil MUST be true: HighlightLayer (atom-pick overlay)
+    //     writes to the stencil buffer and silently produces a black
+    //     canvas without it.
+    // The rest stay off — antialias can come back as a FXAA
+    // post-process; audio + context-loss handling we don't use.
+    const engine = new Engine(canvas.current, false, {
+      adaptToDeviceRatio:     true,
+      preserveDrawingBuffer:  false,
+      stencil:                true,
+      audioEngine:            false,
+      doNotHandleContextLost: true,
+    });
+    // Pin to ref *before* doing anything else so cleanup can dispose
+    // even if we get unmounted mid-init.
+    engineRef.current = engine;
+
+    if (initAbortedRef.current) {
+      // Race: cleanup fired between `new Engine` and now. Drop the
+      // engine ourselves and don't continue setting up the scene.
+      engine.dispose();
+      engineRef.current = null;
+      return;
+    }
     const scene  = new Scene(engine);
     scene.clearColor = new Color4(0, 0, 0, 1);
 
@@ -706,6 +789,12 @@ export const SceneComponent = (props: SceneComponentProps) => {
 
   // Custom-event bridge from the Julia/Bonito side.
   useEffect(() => {
+    // Reset the cancellation flag for THIS mount. Cleanup sets it to
+    // true; without resetting, a re-mount (StrictMode, fast refresh,
+    // etc.) would see initAborted=true at startup and bail.
+    initAbortedRef.current = false;
+    receivedDataRef.current = false;
+
     const handleAddRepresentation: EventListener = (event) => {
       if (event instanceof CustomEvent) update(event.detail);
     };
@@ -731,14 +820,17 @@ export const SceneComponent = (props: SceneComponentProps) => {
       }
     };
 
-    // Watchdog: if the initial scene-state event never arrives we
-    // surface a banner. ~10s is well past first-render of any
-    // reasonable structure but short enough that users don't waste
-    // minutes wondering why the canvas is empty.
-    const CONNECTION_TIMEOUT_MS = 10_000;
-    const watchdog = window.setTimeout(() => {
-      if (!receivedDataRef.current) setConnectionLost(true);
-    }, CONNECTION_TIMEOUT_MS);
+    // Two-stage watchdog (see waitStage docstring above):
+    //  - 8s: subtle "Waiting…" banner (kernel may just be precompiling).
+    //  - 25s: loud "Connection seems stuck" banner with recovery steps.
+    const CONNECTION_WAIT_MS = 8_000;
+    const CONNECTION_HELP_MS = 25_000;
+    const watchdogWait = window.setTimeout(() => {
+      if (!receivedDataRef.current) setWaitStage((s) => (s < 1 ? 1 : s));
+    }, CONNECTION_WAIT_MS);
+    const watchdogHelp = window.setTimeout(() => {
+      if (!receivedDataRef.current) setWaitStage((s) => (s < 2 ? 2 : s));
+    }, CONNECTION_HELP_MS);
 
     init().then(() => {
       const root = webComponentRef.current;
@@ -751,8 +843,63 @@ export const SceneComponent = (props: SceneComponentProps) => {
     });
 
     return () => {
-      window.clearTimeout(watchdog);
-      context.current?.scene.getEngine().dispose();
+      // Signal init() to abort if it's still running (it may have
+      // constructed the Engine but not yet set context.current).
+      initAbortedRef.current = true;
+      window.clearTimeout(watchdogWait);
+      window.clearTimeout(watchdogHelp);
+
+      // Explicit teardown — `engine.dispose()` should cascade, but
+      // Babylon has known gaps where SSAO render pipelines,
+      // HighlightLayers, AdvancedDynamicTexture HUDs, and cached
+      // post-process pipelines retain framebuffers and shader
+      // resources. We've seen JupyterLab tabs accumulate gigabytes of
+      // RAM over repeated cell re-runs; tearing each piece down
+      // explicitly stops the bleed.
+      const ctx = context.current;
+      if (ctx) {
+        try {
+          // Cached SSAO pipelines (we create them once per mode and
+          // reuse) — `scene.dispose()` won't reach those that aren't
+          // currently attached.
+          try { ctx.ssaoCache.ssao?.dispose(); }  catch { /* */ }
+          try { ctx.ssaoCache.ssao2?.dispose(); } catch { /* */ }
+          ctx.ssaoCache = {};
+          try { ctx.ssaoPipeline?.dispose(); } catch { /* */ }
+          ctx.ssaoPipeline = null;
+
+          // HUD: AdvancedDynamicTexture under the StackPanel is a
+          // full-screen render target. Find via its host scene.
+          try {
+            const host = (ctx.hudPanel as any)?.host;
+            host?.dispose?.();
+          } catch { /* */ }
+
+          // Per-rep resources (materials, highlight layers, mesh
+          // instances). Defensive: engine.dispose() should reach
+          // these via the Scene, but if any are detached they'd
+          // leak.
+          for (const m of ctx.representationMaterials) {
+            try { m.dispose(); } catch { /* */ }
+          }
+          for (const l of ctx.representationLayers) {
+            try { l.dispose(); } catch { /* */ }
+          }
+          for (const mesh of ctx.meshes) {
+            try { mesh.dispose(); } catch { /* */ }
+          }
+          ctx.representationMaterials = [];
+          ctx.representationLayers    = [];
+          ctx.meshes                  = [];
+        } catch { /* best-effort cleanup; never throw out of cleanup */ }
+      }
+
+      // Final cascade.
+      if (engineRef.current) {
+        try { engineRef.current.dispose(); } catch { /* best effort */ }
+        engineRef.current = null;
+      }
+      context.current = null;
       window.removeEventListener("resize", resizeHandler);
       const root = webComponentRef.current;
       if (root) {
@@ -774,34 +921,67 @@ export const SceneComponent = (props: SceneComponentProps) => {
         style={{ width: "100%", height: "100%", position: "relative" }}
       >
         <canvas style={{ width: "100%", height: "100%" }} ref={canvas} />
-        {connectionLost && (
+        {waitStage > 0 && (
           <div style={{
             position: "absolute",
             top: 12,
             left: "50%",
             transform: "translateX(-50%)",
-            background: "rgba(140, 30, 30, 0.92)",
+            background: waitStage === 1
+              ? "rgba(60, 80, 110, 0.92)"   // dark slate-blue: informational
+              : "rgba(140, 30, 30, 0.94)",  // deep red: action required
             color: "white",
-            padding: "10px 16px",
+            padding: waitStage === 1 ? "8px 14px" : "12px 18px",
             borderRadius: 6,
             fontFamily: "system-ui, sans-serif",
             fontSize: 13,
-            lineHeight: 1.35,
-            maxWidth: "80%",
-            boxShadow: "0 2px 10px rgba(0,0,0,0.45)",
+            lineHeight: 1.4,
+            maxWidth: waitStage === 1 ? "60%" : "85%",
+            boxShadow: "0 2px 12px rgba(0,0,0,0.5)",
             zIndex: 20,
-            textAlign: "center",
+            textAlign: waitStage === 1 ? "center" : "left",
           }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>
-              Disconnected from Julia kernel
-            </div>
-            <div style={{ opacity: 0.9 }}>
-              No scene data arrived over the WebSocket. The page may be
-              pointing at a port that's no longer live. Restart the
-              kernel and reload the notebook page.
-            </div>
+            {waitStage === 1 ? (
+              <div>
+                <span style={{
+                  display: "inline-block", width: 10, height: 10,
+                  borderRadius: "50%", background: "#7aa6ff",
+                  marginRight: 8, animation: "bv-pulse 1.4s ease-in-out infinite",
+                  verticalAlign: "middle",
+                }} />
+                Waiting for Julia kernel…
+              </div>
+            ) : (
+              <>
+                <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 14 }}>
+                  Connection to Julia kernel seems stuck
+                </div>
+                <div style={{ opacity: 0.92, marginBottom: 6 }}>
+                  No scene data arrived over the WebSocket after ~25 s.
+                  The page is most likely pointing at a kernel session
+                  that's no longer alive (saved notebook output is a
+                  common cause).
+                </div>
+                <div style={{ opacity: 0.92 }}>
+                  Try, in order:
+                  <ol style={{ margin: "4px 0 0 18px", padding: 0 }}>
+                    <li>Re-run the visualization cell.</li>
+                    <li>If that doesn't help, restart the kernel, then
+                        clear cell outputs and re-run.</li>
+                    <li>If still stuck, hard-reload the page
+                        (Cmd-Shift-R / Ctrl-Shift-R).</li>
+                  </ol>
+                </div>
+              </>
+            )}
           </div>
         )}
+        <style>{`
+          @keyframes bv-pulse {
+            0%, 100% { opacity: 0.4; transform: scale(0.85); }
+            50%      { opacity: 1.0; transform: scale(1.1);  }
+          }
+        `}</style>
         {modal.open && (
           <div style={{
             position: "absolute",
@@ -951,6 +1131,64 @@ const sidebarStyles = {
   } as React.CSSProperties,
 };
 
+// Local opacity slider that decouples the drag from the Julia
+// round-trip. A controlled `<input type=range value={r.alpha}>` looks
+// stuck during drag because the new value isn't reflected until Julia
+// echoes it back over the WebSocket (~30–100 ms later). Here we keep a
+// local draft value while the user is interacting, dispatch the
+// request once on release, and re-sync to the authoritative prop value
+// when not actively dragging.
+const OpacitySlider = ({ repIndex, alpha, onCommit }: {
+  repIndex: number;
+  alpha: number;
+  onCommit: (i: number, alpha: number) => void;
+}) => {
+  const [draft, setDraft] = useState<number>(alpha);
+  const draggingRef = useRef<boolean>(false);
+
+  // Sync incoming alpha from Julia only when we're not actively
+  // dragging; otherwise the user's drag would get fought by stale
+  // prop snapshots.
+  useEffect(() => {
+    if (!draggingRef.current) setDraft(alpha);
+  }, [alpha]);
+
+  const commit = (v: number) => {
+    onCommit(repIndex, v);
+  };
+
+  return (
+    <>
+      <input
+        type="range"
+        min={0}
+        max={1}
+        step={0.01}
+        value={draft}
+        onPointerDown={() => { draggingRef.current = true; }}
+        onPointerUp={() => {
+          draggingRef.current = false;
+          commit(draft);
+        }}
+        onPointerCancel={() => { draggingRef.current = false; }}
+        onChange={(e) => setDraft(parseFloat(e.target.value))}
+        // Keyboard nudges (←/→) don't fire pointer events; commit on
+        // change too when we're not in the middle of a drag.
+        onKeyUp={(e) => {
+          if (!draggingRef.current && e.target instanceof HTMLInputElement) {
+            commit(parseFloat(e.target.value));
+          }
+        }}
+        aria-label="Opacity"
+        style={{ flex: 1, accentColor: "#5aa0ff" }}
+      />
+      <span style={{ width: 28, textAlign: "right" }}>
+        {Math.round(draft * 100)}%
+      </span>
+    </>
+  );
+};
+
 const RepresentationSidebar = (props: SidebarProps) => {
   const { reps, active, collapsed, onToggleCollapsed,
           onSetActive, onSetVisibility, onDelete,
@@ -1033,19 +1271,11 @@ const RepresentationSidebar = (props: SidebarProps) => {
                   onClick={(e) => e.stopPropagation()}
                 >
                   <span style={{ width: 32 }}>opacity</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={r.alpha}
-                    onChange={(e) => onSetAlpha(i, parseFloat(e.target.value))}
-                    aria-label="Opacity"
-                    style={{ flex: 1, accentColor: "#5aa0ff" }}
+                  <OpacitySlider
+                    repIndex={i}
+                    alpha={r.alpha}
+                    onCommit={onSetAlpha}
                   />
-                  <span style={{ width: 28, textAlign: "right" }}>
-                    {Math.round(r.alpha * 100)}%
-                  </span>
                 </div>
               </div>
             );

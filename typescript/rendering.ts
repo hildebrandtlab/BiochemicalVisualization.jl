@@ -34,16 +34,36 @@ const renderScene = (ctx: AppContext, reps: any[]) => {
         // Apply per-rep visual overrides (alpha + wireframe). Both
         // live on the StandardMaterials, so we just walk the freshly
         // added slice of ctx.representationMaterials.
+        //
+        // Transparency for instanced geometry (ball-and-stick spheres,
+        // backbone surface tubes) is tricky because Babylon doesn't
+        // depth-sort instances or self-overlapping triangles. Two
+        // mitigations together get rid of most of the visible
+        // artifacts:
+        //
+        //   - `needDepthPrePass`: render the depth buffer once first
+        //     with color disabled, then do the color pass with
+        //     blending. This stops the "ghost copies behind" effect
+        //     where back-facing instances bleed through the front
+        //     ones.
+        //
+        //   - `separateCullingPass`: render back faces then front
+        //     faces in two passes. Useful for the SAS/SES surface
+        //     meshes which have backFaceCulling=false (so both faces
+        //     are drawn anyway) — without this, the back-face
+        //     fragments composite into the alpha buffer in arbitrary
+        //     order. We enable it only when alpha<1 to keep the
+        //     opaque path cheap.
         const alpha      = typeof dr.alpha === "number" ? dr.alpha : 1;
         const wireframe  = dr.wireframe === true;
+        const transparent = alpha < 1;
         for (let j = matStart; j < ctx.representationMaterials.length; j++) {
             const m = ctx.representationMaterials[j];
-            m.alpha     = alpha;
-            m.wireframe = wireframe;
-            // Babylon won't render transparent geometry correctly unless
-            // we explicitly mark it so; flagging needAlphaBlending only
-            // when alpha < 1 keeps the opaque fast path intact.
-            (m as any).transparencyMode = alpha < 1 ? 2 /* ALPHABLEND */ : 0 /* OPAQUE */;
+            m.alpha               = alpha;
+            m.wireframe           = wireframe;
+            m.needDepthPrePass    = transparent;
+            m.separateCullingPass = transparent;
+            (m as any).transparencyMode = transparent ? 2 /* ALPHABLEND */ : 0 /* OPAQUE */;
         }
     });
     ctx.engine.hideLoadingUI();
