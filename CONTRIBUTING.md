@@ -2,7 +2,7 @@
 
 ## Building the documentation locally
 
-The documentation has its own Julia environment in [`docs/`](docs/Project.toml) that
+The documentation has its own Julia environment in `docs/` that
 includes Documenter; the package's own `Project.toml` deliberately does not. Run
 `make.jl` against that environment, not the default project:
 
