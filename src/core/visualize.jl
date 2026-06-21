@@ -35,8 +35,8 @@ function display_model(
     ac::AbstractAtomContainer;
     type="BALL_AND_STICK",
     style="default",
-    width="80%",
-    height="60%"
+    width="100%",
+    height="100%"
 )
     style_str = string(style)
     if !(style_str in VALID_RENDER_STYLES)
@@ -83,7 +83,7 @@ function display_model(
             function (container){
                 $(VISUALIZE).then(VISUALIZE => {
                     parent = $dom.parentNode;
-                    parent.style.height = '100vh';
+                    parent.style.height = '95vh';
 
                     const scene = document.createElement("bv-scene");
                     scene.setAttribute("id", "bv-scene-1");
