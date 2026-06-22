@@ -442,7 +442,7 @@ const setupPicking = (
           // re-enable the previously picked mesh before swapping
           ctx.pickedMesh?.setEnabled(true);
           ctx.pickedMesh = result.pickedMesh as Mesh;
-          ctx.pickedMesh.setEnabled(false);
+          //ctx.pickedMesh.setEnabled(false);
 
           if (ctx.highlightMesh) {
             ctx.highlightMesh.setEnabled(true);
