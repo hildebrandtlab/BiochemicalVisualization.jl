@@ -3,7 +3,7 @@ export
     stick,
     van_der_waals
 
-const VISUALIZE = ES6Module(asset_path("../typescript/dist/biochemicalvisualization.js"))::Asset
+const VISUALIZE = ES6Module(dist_path("biochemicalvisualization.js"))::Asset
 
 const _hex_colors = [hex(RGB((e ./ 255)...)) for e in ELEMENT_COLORS]
 

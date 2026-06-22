@@ -11,7 +11,7 @@ using Statistics
 
 import GeometryBasics: Sphere, Cylinder
 
-asset_path(parts...) = normpath(joinpath(@__DIR__, "..", "assets", parts...))
+dist_path(parts...) = normpath(joinpath(@__DIR__, "..", "typescript", "dist", parts...))
 
 include("compat.jl")
 include("core/element_colors.jl")
