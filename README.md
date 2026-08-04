@@ -21,10 +21,8 @@ using BiochemicalAlgorithms, BiochemicalVisualization
 sys = load_pdb(ball_data_path("../test/data/AlaAla.pdb"))
 
 # Prepare molecule
-fdb = FragmentDB()
-normalize_names!(sys, fdb)
-reconstruct_fragments!(sys, fdb)
-build_bonds!(sys, fdb)
+infer_topology!(sys)
+assign_radii!(sys)
 
 # Visualize using ball-and-stick representation
 ball_and_stick(sys)
