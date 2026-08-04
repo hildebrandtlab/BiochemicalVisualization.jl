@@ -10,10 +10,8 @@ using BiochemicalAlgorithms, BiochemicalVisualization
 sys = load_pdb(ball_data_path("../test/data/AlaAla.pdb"))
 
 # Prepare molecule
-fdb = FragmentDB()
-normalize_names!(sys, fdb)
-reconstruct_fragments!(sys, fdb)
-build_bonds!(sys, fdb)
+infer_topology!(sys)
+assign_radii!(sys)
 ```
 
 # Available representations
@@ -46,8 +44,8 @@ Stick representation of a simple molecule
 van_der_waals(sys)
 ```
 
-![Van-der-waals representation of a simple molecule with unit radii](gfx/van-der-waals.png)
+![Van-der-waals representation of a simple molecule](gfx/van-der-waals.png)
 
-Van-der-waals representation of a simple molecule with unit radii
+Van-der-waals representation of a simple molecule
 
 Please note that the sphere radii are currently not automatically assigned by atom type but rather read from the corresponding `Atom` object (i.e., from its `radius` field).
