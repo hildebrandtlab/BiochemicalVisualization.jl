@@ -1,5 +1,5 @@
 using BiochemicalVisualization
-using Documenter
+using Documenter, DocumenterCodeBlocks
 
 DocMeta.setdocmeta!(BiochemicalVisualization, :DocTestSetup, :(using BiochemicalVisualization); recursive=true)
 
@@ -20,6 +20,7 @@ makedocs(;
             "Representations" => "public/representations.md"
         ]
     ],
+    plugins=[CodeBlocks()],
 )
 
 deploydocs(;
