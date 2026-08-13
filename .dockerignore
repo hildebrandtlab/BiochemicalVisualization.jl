@@ -1,0 +1,20 @@
+# Keep the build context small — the Dockerfile COPYs only Project.toml,
+# src, assets, typescript/dist, and deploy/notebooks.
+.git
+**/node_modules
+tmp
+PfannesMaster
+QuickSES
+Manifest.toml
+uv.lock
+*.png
+docs
+test
+scripts
+typescript/src
+typescript/*.json
+typescript/*.js
+typescript/tsconfig*
+**/__pycache__
+.venv
+.ipynb_checkpoints
