@@ -513,7 +513,11 @@ function _build_scene_app(scene::Scene)
                         // sidebar can include an explicit `rep` index;
                         // the menu bar dispatches without one (Julia
                         // falls back to scene.active).
-                        scene_div.addEventListener("bv-request-model",      (e) => modelReq.notify(e.detail));
+                        console.log("[BCV-DIAG] request listeners wired:", $scene_div_id);
+                        scene_div.addEventListener("bv-request-model",      (e) => {
+                            console.log("[BCV-DIAG] model request:", $scene_div_id, JSON.stringify(e.detail));
+                            modelReq.notify(e.detail);
+                        });
                         scene_div.addEventListener("bv-request-coloring",   (e) => coloringReq.notify(e.detail));
                         scene_div.addEventListener("bv-request-density",    (e) => densityReq.notify(e.detail));
                         scene_div.addEventListener("bv-request-visibility", (e) => visibilityReq.notify(e.detail));
@@ -524,6 +528,8 @@ function _build_scene_app(scene::Scene)
 
                         // Julia → JS: rebuilt scene state arrived
                         sceneObs.on((newState) => {
+                            console.log("[BCV-DIAG] scene push received:", $scene_div_id,
+                                        "active =", newState && newState.active);
                             forwardToScene("add-representation", newState, scene_div);
                         });
                     });

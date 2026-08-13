@@ -78,6 +78,10 @@ class Counters:
 def _attach_listeners(page: Page, c: Counters) -> None:
     def on_console(msg: ConsoleMessage) -> None:
         c.console_msgs.append((msg.type, msg.text))
+        # Surface BCV diagnostics live — they trace the round-trip hops
+        # (request dispatched → scene push received → scene rebuilt).
+        if "[BCV-DIAG]" in msg.text or "[BCV]" in msg.text:
+            log(f"  → console: {msg.text[:200]}")
 
     def on_pageerror(err) -> None:
         # Unhandled JS exceptions / promise rejections never hit the console
@@ -529,8 +533,30 @@ def main():
                 ("test_notebook_proxy.ipynb" if args.notebook == "proxy"
                  else "test_notebook.ipynb"))
     print(f"  → using notebook variant: {args.notebook} ({NOTEBOOK.name})", flush=True)
+    _strip_outputs(NOTEBOOK)
     with jupyter_lab():
         return asyncio.run(run_main(args))
+
+
+def _strip_outputs(path: Path) -> None:
+    """Make runs hermetic: drop saved outputs before opening the notebook.
+
+    JupyterLab autosaves outputs during a run. On the NEXT run those
+    stale outputs boot Bonito sessions that point at the previous
+    (dead) kernel — reconnect storms, watchdog banners, and enough
+    Bonito global-state pollution to break the fresh run's round-trips.
+    """
+    nb = json.loads(path.read_text())
+    dirty = False
+    for cell in nb.get("cells", []):
+        if cell.get("cell_type") == "code":
+            if cell.get("outputs") or cell.get("execution_count") is not None:
+                dirty = True
+            cell["outputs"] = []
+            cell["execution_count"] = None
+    if dirty:
+        path.write_text(json.dumps(nb, indent=1))
+        print("  → stripped stale outputs from notebook", flush=True)
 
 
 if __name__ == "__main__":

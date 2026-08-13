@@ -17,6 +17,13 @@
 //                shift + left drag    → zoom  (BALL shortcut)
 //                ctrl  + left drag    → translate (BALL shortcut)
 //                wheel                → zoom
+//              Touch (BALLView didn't have to answer this; phones do):
+//                one finger drag      → orbit
+//                two finger pinch     → zoom
+//                two finger drag      → translate (pan)
+//              Pinch and pan are read from the same two-finger gesture
+//              (distance change → zoom, centroid change → pan), like
+//              every map app — no mode switching needed.
 //              Pan is implemented by directly translating
 //              `camera.target` along the camera-local right / up axes,
 //              not via `inertialPanningX/Y`. The latter is only
@@ -52,10 +59,15 @@ const suppressContextMenu = (e: Event) => e.preventDefault();
 export const applyMouseMode = (ctx: AppContext, mode: MouseMode) => {
     const canvas = ctx.engine.getRenderingCanvas();
 
-    // Tear down any previous BALLView observer + context-menu suppressor.
+    // Tear down any previous BALLView observer, context-menu
+    // suppressor, and pointercancel listener.
     if (ctx.mouseObserver) {
         ctx.scene.onPointerObservable.remove(ctx.mouseObserver);
         ctx.mouseObserver = null;
+    }
+    if (ctx.mouseModeCleanup) {
+        ctx.mouseModeCleanup();
+        ctx.mouseModeCleanup = null;
     }
     if (canvas) {
         canvas.removeEventListener("contextmenu", suppressContextMenu);
@@ -91,10 +103,13 @@ export const applyMouseMode = (ctx: AppContext, mode: MouseMode) => {
         const qCombined = new Quaternion();
         const panDelta  = new Vector3();
 
-        let down   = false;
+        // Active pointers, tracked per pointerId in client coordinates.
+        // A mouse is a single entry; touch can hold several fingers.
+        // Only deltas are consumed, so the coordinate origin is
+        // irrelevant. (The old single lastX/lastY pair silently
+        // corrupted itself as soon as a second finger landed.)
+        const pointers = new Map<number, { x: number; y: number }>();
         let button = -1;
-        let lastX  = 0;
-        let lastY  = 0;
 
         // Resolve the BALL action (rotate/zoom/translate) for a given
         // mouse-button + modifier combination. Mirrors the switch in
@@ -115,20 +130,15 @@ export const applyMouseMode = (ctx: AppContext, mode: MouseMode) => {
             const e = pi.event as PointerEvent;
             switch (pi.type) {
                 case PointerEventTypes.POINTERDOWN:
-                    down = true;
+                    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
                     button = e.button;
-                    lastX = ctx.scene.pointerX;
-                    lastY = ctx.scene.pointerY;
                     break;
                 case PointerEventTypes.POINTERUP:
-                    down = false;
+                    pointers.delete(e.pointerId);
                     break;
-                case PointerEventTypes.POINTERMOVE:
-                    if (!down) return;
-                    const dx = ctx.scene.pointerX - lastX;
-                    const dy = ctx.scene.pointerY - lastY;
-                    lastX = ctx.scene.pointerX;
-                    lastY = ctx.scene.pointerY;
+                case PointerEventTypes.POINTERMOVE: {
+                    const p = pointers.get(e.pointerId);
+                    if (!p) return;
 
                     const camera = ctx.camera;
 
@@ -142,6 +152,42 @@ export const applyMouseMode = (ctx: AppContext, mode: MouseMode) => {
                     right.normalize();
                     Vector3.CrossToRef(right, forward, viewUp);
                     viewUp.normalize();
+
+                    // Two-finger gesture: distance change → zoom,
+                    // centroid change → pan. Both read from the same
+                    // gesture each move, so pinch-while-dragging works
+                    // the way it does in a map app.
+                    if (pointers.size >= 2 && e.pointerType === "touch") {
+                        const [a1, b1] = [...pointers.values()];
+                        const prevDist = Math.hypot(a1.x - b1.x, a1.y - b1.y);
+                        const prevCx   = (a1.x + b1.x) / 2;
+                        const prevCy   = (a1.y + b1.y) / 2;
+
+                        p.x = e.clientX;
+                        p.y = e.clientY;
+
+                        const [a2, b2] = [...pointers.values()];
+                        const newDist = Math.hypot(a2.x - b2.x, a2.y - b2.y);
+                        const newCx   = (a2.x + b2.x) / 2;
+                        const newCy   = (a2.y + b2.y) / 2;
+
+                        // Spreading the fingers zooms IN — same sign
+                        // convention as the drag-zoom below ("down =
+                        // closer" maps to "apart = closer").
+                        camera.inertialRadiusOffset -=
+                            (newDist - prevDist) * ZOOM_SENS * camera.radius;
+
+                        panDelta.set(0, 0, 0);
+                        panDelta.addInPlace(right.scale(-(newCx - prevCx) * PAN_SENS * camera.radius));
+                        panDelta.addInPlace(viewUp.scale((newCy - prevCy) * PAN_SENS * camera.radius));
+                        camera.target.addInPlace(panDelta);
+                        return;
+                    }
+
+                    const dx = e.clientX - p.x;
+                    const dy = e.clientY - p.y;
+                    p.x = e.clientX;
+                    p.y = e.clientY;
 
                     const action = actionFor(button, e);
 
@@ -187,8 +233,21 @@ export const applyMouseMode = (ctx: AppContext, mode: MouseMode) => {
                         camera.target.addInPlace(panDelta);
                     }
                     break;
+                }
             }
         });
+
+        // iOS Safari fires pointercancel when it decides the browser
+        // owns a gesture; a cancelled finger never delivers POINTERUP
+        // through Babylon, and a stale map entry would leave us stuck
+        // in "two-finger" interpretation. Clear everything.
+        if (canvas) {
+            const cancelAll = () => pointers.clear();
+            canvas.addEventListener("pointercancel", cancelAll);
+            ctx.mouseModeCleanup = () => {
+                canvas.removeEventListener("pointercancel", cancelAll);
+            };
+        }
     }
 
     if (canvas) ctx.camera.attachControl(canvas, true);

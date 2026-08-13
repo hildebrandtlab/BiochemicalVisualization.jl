@@ -27,13 +27,13 @@ import {
 // count). Re-add a dev-only Inspector path if/when needed for
 // debugging this package itself.
 
-import { AdvancedDynamicTexture, Button, StackPanel, TextBlock, Control } from '@babylonjs/gui';
+import { AdvancedDynamicTexture, StackPanel, TextBlock, Control } from '@babylonjs/gui';
 
 import { renderScene } from './rendering';
 import { changeSSAOMode, SsaoCache } from './ssao';
-import { RenderStyle, applyRenderStyle } from './style';
-import { LightingMode, LIGHTING_MODES, applyLightingMode, lightingModeLabel } from './lighting';
-import { MouseMode, MOUSE_MODES, applyMouseMode, mouseModeLabel } from './mouse';
+import { RenderStyle, RENDER_STYLES, applyRenderStyle } from './style';
+import { LightingMode, LIGHTING_MODES, applyLightingMode } from './lighting';
+import { MouseMode, MOUSE_MODES, applyMouseMode } from './mouse';
 
 type SceneComponentProps = {
   id: string;
@@ -119,6 +119,9 @@ export type AppContext = {
   // Custom pointer observer used by the BALLView mouse mode; cleared
   // when switching back to default.
   mouseObserver: Observer<PointerInfo> | null,
+  // Extra DOM listener cleanup installed by the BALLView mode
+  // (pointercancel safety net); called when the mode changes.
+  mouseModeCleanup: (() => void) | null,
 
   hudPanel: StackPanel,
   debugText: DebugText,
@@ -268,113 +271,41 @@ const setupInstrumentation = (
   });
 };
 
-const setupMenuBar = (ctx: AppContext) => {
-  const ui = AdvancedDynamicTexture.CreateFullscreenUI("menubar", true, ctx.scene);
-  _scaleUIToCSS(ui, ctx.engine);
+// Mirror of the view-affecting ctx fields, held as React state so the
+// sidebar's "View" section re-renders when a control (or Julia, via
+// syncActiveLabels) changes something. The Babylon side stays the
+// single source of truth for behavior; this is display state only.
+export type ViewState = {
+  model:    ModelType;
+  coloring: ColoringMethod;
+  density:  DensityLevel;
+  style:    RenderStyle;
+  lighting: LightingMode;
+  mouse:    MouseMode;
+  ssaoMode: number;   // 1 = SSAOv1, 2 = SSAOv2, 3 = off
+  hAtoms:   boolean;
+  debug:    boolean;
+};
 
-  const bar = new StackPanel();
-  bar.isVertical = false;
-  bar.adaptWidthToChildren = true;
-  bar.height = "32px";
-  bar.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_RIGHT;
-  bar.verticalAlignment   = Control.VERTICAL_ALIGNMENT_TOP;
-  bar.top = "8px";
-  bar.paddingRight = "8px";
-  ui.addControl(bar);
-
-  const makeButton = (label: string, onClick: () => void) => {
-    const btn = Button.CreateSimpleButton(label, label);
-    btn.width = "120px";
-    btn.height = "28px";
-    btn.color = "white";
-    btn.background = "rgba(0, 0, 0, 0.6)";
-    btn.cornerRadius = 4;
-    btn.thickness = 0;
-    btn.paddingLeft  = "4px";
-    btn.paddingRight = "4px";
-    const text = btn.children[0] as TextBlock;
-    text.fontSize = 12;
-    text.fontFamily = "monospace";
-    btn.onPointerUpObservable.add(onClick);
-    bar.addControl(btn);
-    return { btn, text };
-  };
-
-  const debugBtn = makeButton(`Debug: ${ctx.debug ? "ON" : "OFF"}`, () => {
-    ctx.controls?.setDebug(!ctx.debug);
-  });
-
-  const hBtn = makeButton(`H atoms: ${ctx.hAtomsVisible ? "ON" : "OFF"}`, () => {
-    ctx.controls?.setHAtomsVisible(!ctx.hAtomsVisible);
-  });
-
-  // Modes: 1 = SSAOv1, 2 = SSAOv2, 3 = off.
-  const ssaoLabel = (m: number) => m === 1 ? "SSAO: v1" : m === 2 ? "SSAO: v2" : "SSAO: off";
-  const ssaoBtn = makeButton(ssaoLabel(ctx.ssaoMode), () => {
-    ctx.controls?.setSSAOMode((ctx.ssaoMode % 3) + 1);
-  });
-
-  const styleLabel = (s: RenderStyle) => `Style: ${s}`;
-  const styleBtn = makeButton(styleLabel(ctx.renderStyle), () => {
-    const next: RenderStyle = ctx.renderStyle === "default" ? "qutemol" : "default";
-    ctx.controls?.setRenderStyle(next);
-  });
-
-  const modelLabel = (m: ModelType) =>
-    m === "BALL_AND_STICK" ? "Model: ball+stick" :
-    m === "STICK"          ? "Model: stick"      :
-    m === "VAN_DER_WAALS"  ? "Model: vdW"        :
-    m === "SAS"            ? "Model: SAS"        :
-    m === "SES"            ? "Model: SES"        :
-    m === "BACKBONE"       ? "Model: backbone"   :
-    m === "RIBBON"         ? "Model: ribbon"     :
-                             "Model: cartoon";
-  const modelBtn = makeButton(modelLabel(ctx.activeModel), () => {
-    const i = MODEL_TYPES.indexOf(ctx.activeModel);
-    const next = MODEL_TYPES[(i + 1) % MODEL_TYPES.length];
-    ctx.controls?.setModel(next);
-  });
-
-  const coloringLabel = (c: ColoringMethod) => `Color: ${c}`;
-  const coloringBtn = makeButton(coloringLabel(ctx.activeColoring), () => {
-    const i = COLORING_METHODS.indexOf(ctx.activeColoring);
-    const next = COLORING_METHODS[(i + 1) % COLORING_METHODS.length];
-    ctx.controls?.setColoring(next);
-  });
-
-  const densityLabel = (d: DensityLevel) => `Density: ${d}`;
-  const densityBtn = makeButton(densityLabel(ctx.activeDensity), () => {
-    const i = DENSITY_LEVELS.indexOf(ctx.activeDensity);
-    const next = DENSITY_LEVELS[(i + 1) % DENSITY_LEVELS.length];
-    ctx.controls?.setDensity(next);
-  });
-
-  const lightingBtn = makeButton(lightingModeLabel(ctx.lightingMode), () => {
-    const i = LIGHTING_MODES.indexOf(ctx.lightingMode);
-    const next = LIGHTING_MODES[(i + 1) % LIGHTING_MODES.length];
-    ctx.controls?.setLightingMode(next);
-  });
-
-  const mouseBtn = makeButton(mouseModeLabel(ctx.mouseMode), () => {
-    const i = MOUSE_MODES.indexOf(ctx.mouseMode);
-    const next = MOUSE_MODES[(i + 1) % MOUSE_MODES.length];
-    ctx.controls?.setMouseMode(next);
-  });
-
-  makeButton("Screenshot", () => {
-    ctx.controls?.takeScreenshot();
-  });
-
+// Wire up ctx.controls. The controls used to live in a Babylon-GUI
+// menu bar rendered into the canvas; ten fixed-width buttons overflowed
+// and became unreachable on narrow viewports (no scrolling inside a
+// GUI texture). They are now DOM widgets in the sidebar's "View"
+// section — `patch` pushes label state into React; behavior stays here.
+const setupControls = (
+  ctx: AppContext,
+  patch: (p: Partial<ViewState>) => void,
+) => {
   ctx.controls = {
     setDebug: (on) => {
       ctx.debug = on;
-      debugBtn.text.text = `Debug: ${on ? "ON" : "OFF"}`;
       ctx.hudPanel.isVisible = on;
+      patch({ debug: on });
     },
 
     setHAtomsVisible: (on) => {
       ctx.hAtomsVisible = on;
-      hBtn.text.text = `H atoms: ${on ? "ON" : "OFF"}`;
+      patch({ hAtoms: on });
       ctx.scene.unfreezeActiveMeshes();
       for (const mesh of ctx.meshes) {
         const md = mesh.metadata as any;
@@ -393,13 +324,13 @@ const setupMenuBar = (ctx: AppContext) => {
 
     setSSAOMode: (mode) => {
       ctx.ssaoMode = mode;
-      ssaoBtn.text.text = ssaoLabel(mode);
+      patch({ ssaoMode: mode });
       changeSSAOMode(ctx);
     },
 
     setRenderStyle: (style) => {
       applyRenderStyle(ctx, style);
-      styleBtn.text.text = styleLabel(style);
+      patch({ style });
     },
 
     setModel: (model) => {
@@ -408,7 +339,7 @@ const setupMenuBar = (ctx: AppContext) => {
       // the Julia side and the new representation arrives via an
       // add-representation event.
       ctx.activeModel = model;
-      modelBtn.text.text = modelLabel(model);
+      patch({ model });
       ctx.sceneRoot.dispatchEvent(new CustomEvent("bv-request-model", {
         detail: { type: model },
       }));
@@ -420,7 +351,7 @@ const setupMenuBar = (ctx: AppContext) => {
       // and ships back via add-representation. Only meaningful for the
       // surface models (SAS/SES) today, but harmless on atom models.
       ctx.activeColoring = method;
-      coloringBtn.text.text = coloringLabel(method);
+      patch({ coloring: method });
       ctx.sceneRoot.dispatchEvent(new CustomEvent("bv-request-coloring", {
         detail: { coloring: method },
       }));
@@ -432,7 +363,7 @@ const setupMenuBar = (ctx: AppContext) => {
       // request when an atom model is active but still records the
       // setting so a subsequent switch to SAS/SES uses it.
       ctx.activeDensity = level;
-      densityBtn.text.text = densityLabel(level);
+      patch({ density: level });
       ctx.sceneRoot.dispatchEvent(new CustomEvent("bv-request-density", {
         detail: { density: level },
       }));
@@ -440,27 +371,25 @@ const setupMenuBar = (ctx: AppContext) => {
 
     setLightingMode: (mode) => {
       applyLightingMode(ctx, mode);
-      lightingBtn.text.text = lightingModeLabel(mode);
+      patch({ lighting: mode });
     },
 
     setMouseMode: (mode) => {
       applyMouseMode(ctx, mode);
-      mouseBtn.text.text = mouseModeLabel(mode);
+      patch({ mouse: mode });
     },
 
     takeScreenshot: () => {
       Tools.CreateScreenshot(ctx.engine, ctx.camera, { precision: 2 });
     },
 
-    // Update the model/coloring/density button labels from the
-    // active rep WITHOUT dispatching back to Julia. Used by update()
-    // when a new scene_obs lands so the menu reflects the current
-    // active rep — e.g. after `stick(sys)` the menu shows
-    // "Model: stick" instead of the initial "Model: ball+stick".
+    // Update the model/coloring/density selections from the active rep
+    // WITHOUT dispatching back to Julia. Used by update() when a new
+    // scene_obs lands so the sidebar reflects the current active rep —
+    // e.g. after `stick(sys)` the View section shows "stick" instead of
+    // the initial "ball+stick".
     syncActiveLabels: (model: ModelType, coloring: ColoringMethod, density: DensityLevel) => {
-      modelBtn.text.text    = modelLabel(model);
-      coloringBtn.text.text = coloringLabel(coloring);
-      densityBtn.text.text  = densityLabel(density);
+      patch({ model, coloring, density });
     },
   };
 };
@@ -576,6 +505,19 @@ export const SceneComponent = (props: SceneComponentProps) => {
   const [reps,  setReps]    = useState<RepSummary[]>([]);
   const [active, setActive] = useState<number>(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
+  // Sidebar "View" section state. Must match the ctx defaults set in
+  // init() — setupControls patches it on every change thereafter.
+  const [view, setView] = useState<ViewState>({
+    model:    "BALL_AND_STICK",
+    coloring: "element",
+    density:  "medium",
+    style:    "default",
+    lighting: "headlight",
+    mouse:    "ballview",
+    ssaoMode: 3,
+    hAtoms:   true,
+    debug:    false,
+  });
   // Connection-health watchdog: if the first scene state hasn't
   // arrived within a short window, show a visible banner so the user
   // knows something's amiss. Two stages:
@@ -769,6 +711,7 @@ export const SceneComponent = (props: SceneComponentProps) => {
       lightingObserver: null,
       mouseMode: "ballview",
       mouseObserver: null,
+      mouseModeCleanup: null,
       hudPanel,
       debugText,
       update,
@@ -778,7 +721,7 @@ export const SceneComponent = (props: SceneComponentProps) => {
 
     setupInstrumentation(ctx, engineInst, sceneInst);
     setupPicking(ctx, setModal);
-    setupMenuBar(ctx);
+    setupControls(ctx, (p) => setView((v) => ({ ...v, ...p })));
     // Apply the initial mouse mode so the BALLView pointer observer is
     // actually wired up (the default mode is BALLView; flipping the
     // string alone wouldn't attach the observer).
@@ -920,7 +863,10 @@ export const SceneComponent = (props: SceneComponentProps) => {
         ref={canvasWrapperRef}
         style={{ width: "100%", height: "100%", position: "relative" }}
       >
-        <canvas style={{ width: "100%", height: "100%" }} ref={canvas} />
+        {/* touchAction none: without it, mobile browsers claim touch
+            moves for page scroll/zoom and camera gestures never reach
+            the canvas. */}
+        <canvas style={{ width: "100%", height: "100%", touchAction: "none" }} ref={canvas} />
         {waitStage > 0 && (
           <div style={{
             position: "absolute",
@@ -1028,6 +974,8 @@ export const SceneComponent = (props: SceneComponentProps) => {
         onDelete={requestDelete}
         onSetAlpha={requestAlpha}
         onSetWireframe={requestWireframe}
+        view={view}
+        controls={() => context.current?.controls}
       />
     </div>
   );
@@ -1047,6 +995,10 @@ type SidebarProps = {
   onDelete:        (i: number) => void;
   onSetAlpha:      (i: number, alpha: number) => void;
   onSetWireframe:  (i: number, wireframe: boolean) => void;
+  // View section: mirrored state + a late-bound accessor for
+  // ctx.controls (context.current is null until init() completes).
+  view:     ViewState;
+  controls: () => AppControls | undefined;
 };
 
 const SIDEBAR_W           = 240;
@@ -1054,12 +1006,10 @@ const SIDEBAR_COLLAPSED_W = 28;
 
 const sidebarStyles = {
   // The sidebar floats over the canvas instead of taking flex
-  // layout space. Two reasons: (a) the Babylon menu bar (HUD) uses
-  // pixel widths, so a narrower canvas clips it on the right; and
-  // (b) shrinking the canvas reframes the camera, which feels like a
-  // FOV jump when collapsing/expanding. With the overlay layout the
-  // canvas keeps full width and only some pixels of the 3D view get
-  // covered when the sidebar is expanded.
+  // layout space: shrinking the canvas reframes the camera, which
+  // feels like a FOV jump when collapsing/expanding. With the overlay
+  // layout the canvas keeps full width and only some pixels of the 3D
+  // view get covered when the sidebar is expanded.
   panel: (collapsed: boolean): React.CSSProperties => ({
     position: "absolute",
     top: 0,
@@ -1189,10 +1139,144 @@ const OpacitySlider = ({ repIndex, alpha, onCommit }: {
   );
 };
 
+// Short display labels for the model select. Wire values stay the
+// UPPER_SNAKE ModelType strings.
+const MODEL_LABELS: Record<ModelType, string> = {
+  BALL_AND_STICK: "ball+stick",
+  STICK:          "stick",
+  VAN_DER_WAALS:  "vdW",
+  SAS:            "SAS",
+  SES:            "SES",
+  BACKBONE:       "backbone",
+  RIBBON:         "ribbon",
+  CARTOON:        "cartoon",
+};
+
+const viewStyles = {
+  section: {
+    borderBottom: "1px solid rgba(255,255,255,0.08)",
+    padding: "6px 8px 8px 10px",
+  } as React.CSSProperties,
+  sectionTitle: {
+    fontWeight: 600,
+    letterSpacing: 0.2,
+    opacity: 0.85,
+    margin: "2px 0 6px 0",
+  } as React.CSSProperties,
+  row: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 4,
+  } as React.CSSProperties,
+  rowLabel: {
+    width: 52,
+    flexShrink: 0,
+    opacity: 0.8,
+  } as React.CSSProperties,
+  select: {
+    flex: 1,
+    minWidth: 0,
+    background: "rgba(255,255,255,0.08)",
+    color: "white",
+    border: "1px solid rgba(255,255,255,0.15)",
+    borderRadius: 3,
+    fontSize: 12,
+    padding: "2px 4px",
+  } as React.CSSProperties,
+  checkboxLabel: {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    cursor: "pointer",
+    userSelect: "none",
+  } as React.CSSProperties,
+  actionButton: {
+    background: "rgba(255,255,255,0.1)",
+    color: "white",
+    border: "1px solid rgba(255,255,255,0.18)",
+    borderRadius: 3,
+    fontSize: 12,
+    padding: "3px 10px",
+    cursor: "pointer",
+  } as React.CSSProperties,
+};
+
+// A labeled <select> row for the View section.
+const SelectRow = <T extends string>({ label, value, options, labels, onChange }: {
+  label:   string;
+  value:   T;
+  options: readonly T[];
+  labels?: Partial<Record<T, string>>;
+  onChange: (v: T) => void;
+}) => (
+  <div style={viewStyles.row}>
+    <span style={viewStyles.rowLabel}>{label}</span>
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value as T)}
+      aria-label={label}
+      style={viewStyles.select}
+    >
+      {options.map((o) => (
+        <option key={o} value={o}>{labels?.[o] ?? o}</option>
+      ))}
+    </select>
+  </div>
+);
+
+// The View section: everything that used to live in the Babylon-GUI
+// top menu bar. As DOM inside the (scrollable) sidebar it stays
+// reachable at any viewport width and works with touch.
+const ViewSection = ({ view, controls }: {
+  view: ViewState;
+  controls: () => AppControls | undefined;
+}) => (
+  <div style={viewStyles.section}>
+    <div style={viewStyles.sectionTitle}>View</div>
+    <SelectRow label="Model" value={view.model} options={MODEL_TYPES}
+               labels={MODEL_LABELS}
+               onChange={(m) => controls()?.setModel(m)} />
+    <SelectRow label="Color" value={view.coloring} options={COLORING_METHODS}
+               onChange={(c) => controls()?.setColoring(c)} />
+    <SelectRow label="Density" value={view.density} options={DENSITY_LEVELS}
+               onChange={(d) => controls()?.setDensity(d)} />
+    <SelectRow label="Style" value={view.style} options={RENDER_STYLES}
+               onChange={(s) => controls()?.setRenderStyle(s)} />
+    <SelectRow label="Light" value={view.lighting} options={LIGHTING_MODES}
+               onChange={(l) => controls()?.setLightingMode(l)} />
+    <SelectRow label="Mouse" value={view.mouse} options={MOUSE_MODES}
+               onChange={(m) => controls()?.setMouseMode(m)} />
+    <SelectRow label="SSAO" value={String(view.ssaoMode)} options={["3", "1", "2"] as const}
+               labels={{ "3": "off", "1": "v1", "2": "v2" }}
+               onChange={(v) => controls()?.setSSAOMode(parseInt(v, 10))} />
+
+    <div style={{ ...viewStyles.row, marginTop: 6, gap: 12 }}>
+      <label style={viewStyles.checkboxLabel}>
+        <input type="checkbox" checked={view.hAtoms}
+               onChange={(e) => controls()?.setHAtomsVisible(e.target.checked)} />
+        H atoms
+      </label>
+      <label style={viewStyles.checkboxLabel}>
+        <input type="checkbox" checked={view.debug}
+               onChange={(e) => controls()?.setDebug(e.target.checked)} />
+        Stats
+      </label>
+    </div>
+
+    <div style={{ ...viewStyles.row, marginTop: 6, marginBottom: 0 }}>
+      <button style={viewStyles.actionButton}
+              onClick={() => controls()?.takeScreenshot()}>
+        Screenshot
+      </button>
+    </div>
+  </div>
+);
+
 const RepresentationSidebar = (props: SidebarProps) => {
   const { reps, active, collapsed, onToggleCollapsed,
           onSetActive, onSetVisibility, onDelete,
-          onSetAlpha, onSetWireframe } = props;
+          onSetAlpha, onSetWireframe, view, controls } = props;
 
   return (
     <div style={sidebarStyles.panel(collapsed)} aria-label="Representations">
@@ -1205,6 +1289,8 @@ const RepresentationSidebar = (props: SidebarProps) => {
           style={sidebarStyles.iconButton}
         >{collapsed ? "«" : "»"}</button>
       </div>
+
+      {!collapsed && <ViewSection view={view} controls={controls} />}
 
       {!collapsed && (
         <div style={sidebarStyles.list}>
