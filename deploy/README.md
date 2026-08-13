@@ -30,6 +30,11 @@ Open `example.ipynb` and run the cells.
 > Change the token: edit `JUPYTER_TOKEN` in `docker-compose.yml` (default
 > `change-me`).
 
+> Change the port: the published host port defaults to **8888** and can be
+> overridden with the `BCV_PORT` environment variable, e.g.
+> `BCV_PORT=9999 docker compose up` (then browse to `:9999`). You can also
+> put `BCV_PORT=9999` into an `.env` file next to `docker-compose.yml`.
+
 ## Reaching it from an iPhone
 
 The phone is a *remote* browser, so it must reach the host and use proxy
@@ -42,9 +47,9 @@ on macOS) and browse to it from the phone:
 http://192.168.1.42:8888/lab?token=change-me
 ```
 
-`docker compose` already publishes `0.0.0.0:8888`, so nothing else is
-needed beyond the two devices being on the same network (and the host
-firewall allowing 8888).
+`docker compose` already publishes `0.0.0.0:8888` (or your `BCV_PORT`),
+so nothing else is needed beyond the two devices being on the same
+network (and the host firewall allowing the port).
 
 **Over the internet / away from home.** Put a tunnel in front of 8888:
 

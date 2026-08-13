@@ -44,7 +44,7 @@ RUN sed -i '/^\[sources\]/d; /^BiochemicalAlgorithms = {path/d' Project.toml
 
 # IJulia goes into the shared depot env so it's on the stacked load path
 # for `julia --project=/opt/bcv`. Then instantiate + precompile the package
-# (resolves BiochemicalAlgorithms 0.7.x and Bonito 4.2.0 from the registry),
+# (resolves BiochemicalAlgorithms 0.7.x and Bonito 5.x from the registry),
 # and register a kernel that starts in this project.
 RUN julia -e 'using Pkg; Pkg.add("IJulia")' \
  && julia --project=/opt/bcv -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()' \
