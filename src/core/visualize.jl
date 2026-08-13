@@ -35,10 +35,10 @@ include_dependency(_VISUALIZE_BUNDLE)
 const VISUALIZE_LOCAL = ES6Module(_VISUALIZE_BUNDLE)::Asset
 
 # Lazily-built, kept-alive HTTPAssetServer route that serves the bundle
-# by URL even while sessions use NoServer, plus the online ES6Module
-# pointing at it. Both are created on first use (when the Bonito server
-# and its proxy URL are known) and never torn down, so the bundle URL
-# stays valid for the kernel's lifetime.
+# by URL even while sessions use NoServer, plus the dynamic-import JS
+# expression pointing at it. Both are created on first use (when the
+# Bonito server and its proxy URL are known) and never torn down, so the
+# bundle URL stays valid for the kernel's lifetime.
 const _BUNDLE_ASSET_SERVER = Ref{Any}(nothing)
 const _VISUALIZE_ONLINE    = Ref{Any}(nothing)
 
@@ -48,27 +48,50 @@ const _VISUALIZE_ONLINE    = Ref{Any}(nothing)
 _is_offline_export() = Bonito.FORCED_CONNECTION[] === Bonito.NoConnection
 
 """
-    _visualize() -> Asset
+    _visualize() -> Union{Asset, Bonito.JSCode}
 
-The bundle asset to interpolate into a scene's JS. Externalizes the
-bundle to a stable HTTP URL ONLY when it would otherwise be inlined by
-NoServer (i.e. under IJulia, interactive). For the REPL/standalone path
-Bonito already serves the local asset by URL, and for offline export we
-want it inlined — both return the local asset.
+What to interpolate into a scene's JS for the bundle module promise.
+Externalizes the bundle to a stable HTTP URL ONLY when it would otherwise
+be inlined by NoServer (i.e. under IJulia, interactive) — that path
+returns a raw `import('<url>')` JSCode expression. For the REPL/
+standalone path Bonito already serves the local asset by URL, and for
+offline export we want it inlined — both return the local `Asset`.
 """
 function _visualize()
     (isdefined(Main, :IJulia) && !_is_offline_export()) || return VISUALIZE_LOCAL
     if isnothing(_VISUALIZE_ONLINE[])
         # Register a permanent HTTPAssetServer route on the (already
         # running, used for the WebSocket) global server. `url(...)`
-        # registers the bundle and returns a proxy-aware URL
-        # (direct localhost, or the jupyter-server-proxy path when
-        # BCV_JUPYTER_PROXY is set). We keep the ChildAssetServer in a
-        # module Ref so its objectid ref keeps the file registered.
+        # registers the bundle and returns a proxy-aware URL: absolute
+        # `http://localhost:<port>/assets/...` in direct mode, but
+        # PAGE-RELATIVE `/proxy/<port>/assets/...` when BCV_JUPYTER_PROXY
+        # is set (the browser resolves it against the JupyterLab origin —
+        # that's what makes remote/phone access work). We keep the
+        # ChildAssetServer in a module Ref so its refcount keeps the
+        # bundle registered.
         server = Bonito.HTTPAssetServer()
         bundle_url = Bonito.url(server, VISUALIZE_LOCAL)
         _BUNDLE_ASSET_SERVER[] = server
-        _VISUALIZE_ONLINE[]    = Bonito.ES6Module(bundle_url)
+        # Hand back a raw dynamic-import EXPRESSION, not an Asset.
+        # `ES6Module(bundle_url)` breaks in proxy mode: the page-relative
+        # URL fails Bonito's `is_online` check (only http/https/ftp/`//`
+        # prefixes count), gets treated as a local file path, and the
+        # es6module Asset constructor then tries — and fails — to
+        # deno-bundle it ("Failed to bundle /proxy/... bundle_dir:
+        # nothing"). Even in direct mode that round-trip made deno fetch
+        # and re-bundle the already-bundled file from our own server.
+        #
+        # The specifier must be absolutized IN THE BROWSER: under
+        # NoServer this import() executes inside modules loaded from
+        # data: URLs, which have no base URL, so even a root-relative
+        # "/proxy/<port>/assets/..." fails with "Failed to resolve
+        # module specifier". `new URL(path, window.location.href)`
+        # resolves it against the page the user actually loaded (any
+        # host: localhost, LAN IP, tunnel) and is a no-op for already-
+        # absolute URLs. The browser module cache dedups repeat imports
+        # of the same resolved URL across cells.
+        _VISUALIZE_ONLINE[] =
+            js"import(new URL($(bundle_url), window.location.href).href)"
     end
     return _VISUALIZE_ONLINE[]
 end
@@ -161,13 +184,21 @@ _density_level(d::AbstractString) = (d in DENSITY_LEVELS) ? String(d) :
 const _SCENE_COUNTER = Ref(0)
 _next_scene_id() = (_SCENE_COUNTER[] += 1; "bv-scene-$(_SCENE_COUNTER[])")
 
-# Bundle dedup across notebook cells. Bonito's `push_dependencies!`
-# emits per-subsession assets via `setdiff(sub.imports, root.imports)`,
-# so adding our bundle to the root session's imports causes every
-# subsequent subsession to skip re-embedding it. The browser registers
-# `BONITO_IMPORTS[hash] = import('data:...')` from the first cell that
-# does emit the bundle; later cells' JS still references the same
-# `BONITO_IMPORTS[hash]` and gets the cached promise.
+# Bundle dedup across notebook cells for the OFFLINE-EXPORT path, where
+# `_visualize()` returns the local `Asset` and NoServer would inline the
+# ~7 MB bundle as a data: URL into EVERY cell. Bonito's
+# `push_dependencies!` emits per-subsession assets via
+# `setdiff(sub.imports, root.imports)`, so adding our bundle to the root
+# session's imports causes every subsequent subsession to skip
+# re-embedding it. The browser registers `BONITO_IMPORTS[hash] =
+# import('data:...')` from the first cell that does emit the bundle;
+# later cells' JS still references the same `BONITO_IMPORTS[hash]` and
+# gets the cached promise.
+#
+# The interactive path needs none of this: there `_visualize()` returns
+# a raw `import('<url>')` expression and the browser module cache dedups
+# by URL. (It must also not reach the `push!` below — `root.imports` is
+# an `OrderedSet{Asset}` and would reject a JSCode.)
 #
 # We must NOT push on the very first display in a fresh root session —
 # otherwise the setdiff strips the bundle from cell 1 too and no cell
@@ -177,13 +208,15 @@ const _LAST_ROOT = Ref{Union{Nothing, Bonito.Session}}(nothing)
 
 function _maybe_dedup_visualize_asset!(session)
     isnothing(session.parent) && return
+    asset = _visualize()
+    asset isa Bonito.Asset || return
     root = Bonito.root_session(session)
     if _LAST_ROOT[] !== root
         # First display in this root session — let the bundle emit normally.
         _LAST_ROOT[] = root
         return
     end
-    push!(root.imports, _visualize())
+    push!(root.imports, asset)
     return
 end
 
@@ -468,7 +501,21 @@ function _build_scene_app(scene::Scene)
             }
         """)
 
-        Bonito.record_states(session, dom)
+        # The do-block's value is the DOM the App renders. For offline/
+        # static export, route it through `record_states`, which renders
+        # `dom`, sweeps the widget states, and returns the node with the
+        # recorded statemap attached — that's what keeps the exported
+        # HTML interactive without a Julia process.
+        #
+        # Live sessions must NOT go through `record_states`: on Bonito
+        # >= 5 sub-sessions share the root's connection (SubConnection
+        # was removed), so once the first cell's WebSocket is open,
+        # `record_states` in any later cell throws ("Session shouldn't
+        # be open" from `while_disconnected`) — and even before the
+        # socket opens it consumes the session's queued messages (our
+        # `onload` above included) into the statemap, leaving the live
+        # path with no scene.
+        _is_offline_export() ? Bonito.record_states(session, dom) : dom
     end
 end
 

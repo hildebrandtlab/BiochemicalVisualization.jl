@@ -72,11 +72,17 @@ class Counters:
     ws_frames_sent: int = 0
     ws_frames_recv: int = 0
     failed_requests: list[tuple[str, int]] = field(default_factory=list)
+    asset_requests: list[tuple[str, int, str]] = field(default_factory=list)
 
 
 def _attach_listeners(page: Page, c: Counters) -> None:
     def on_console(msg: ConsoleMessage) -> None:
         c.console_msgs.append((msg.type, msg.text))
+
+    def on_pageerror(err) -> None:
+        # Unhandled JS exceptions / promise rejections never hit the console
+        # listener; without this a failed dynamic import() is invisible.
+        c.console_msgs.append(("pageerror", str(err)))
 
     def on_websocket(ws: WebSocket) -> None:
         c.ws_opens.append(ws.url)
@@ -87,8 +93,17 @@ def _attach_listeners(page: Page, c: Counters) -> None:
     def on_response(resp: Response) -> None:
         if resp.status >= 400:
             c.failed_requests.append((resp.url, resp.status))
+        # Track the Bonito bundle/asset fetches so a proxy-mode run shows
+        # whether the browser ever requested the externalized bundle (and
+        # what content type came back — an HTML error page here means auth
+        # or routing trouble that a bare status can't reveal).
+        if "/assets/" in resp.url:
+            ctype = resp.headers.get("content-type", "?")
+            c.asset_requests.append((resp.url, resp.status, ctype))
+            log(f"  → asset response: {resp.status} {ctype} {resp.url}")
 
     page.on("console", on_console)
+    page.on("pageerror", on_pageerror)
     page.on("websocket", on_websocket)
     page.on("response", on_response)
 
