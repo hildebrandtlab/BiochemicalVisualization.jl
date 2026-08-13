@@ -90,8 +90,32 @@ function _visualize()
         # host: localhost, LAN IP, tunnel) and is a no-op for already-
         # absolute URLs. The browser module cache dedups repeat imports
         # of the same resolved URL across cells.
-        _VISUALIZE_ONLINE[] =
-            js"import(new URL($(bundle_url), window.location.href).href)"
+        #
+        # The fetch is retried with backoff: served through a proxy
+        # chain (e.g. tailscale serve → jupyter-server-proxy), the
+        # request can fail transiently — the same chain observably drops
+        # WebSockets with close code 1005 under load. Bonito's WS
+        # retries forever, but a dynamic import rejects ONCE, silently,
+        # and the scene would stay empty until a manual page reload.
+        # Retries append a cache-busting query (`bundle_url` always
+        # carries a `?<content_hash>`, and the asset route ignores the
+        # query string) so a failure poisoned into the browser's module
+        # map can't block the retry.
+        _VISUALIZE_ONLINE[] = js"""
+            ((url) => {
+                const attempt = (n) => import(n === 0 ? url : url + '&bcvretry=' + n)
+                    .catch((err) => {
+                        if (n >= 4) {
+                            console.error('[BCV] bundle import failed after ' + (n + 1) + ' attempts:', err);
+                            throw err;
+                        }
+                        console.warn('[BCV] bundle import failed (attempt ' + (n + 1) + '), retrying:', err);
+                        return new Promise((res) => setTimeout(res, 1000 * (n + 1)))
+                            .then(() => attempt(n + 1));
+                    });
+                return attempt(0);
+            })(new URL($(bundle_url), window.location.href).href)
+        """
     end
     return _VISUALIZE_ONLINE[]
 end
