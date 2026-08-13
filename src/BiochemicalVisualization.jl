@@ -7,7 +7,6 @@ using Colors
 using GeometryBasics
 using LinearAlgebra
 using MsgPack
-using Sockets
 using Statistics
 
 import GeometryBasics: Sphere, Cylinder
@@ -92,30 +91,18 @@ function Bonito.jupyterlab_proxy_url(port::Integer)
 end
 
 function __init__()
-    # Pick a fresh ephemeral port for this kernel BEFORE we let Bonito
-    # decide. Bonito's default is a fixed 9384 with sequential fallback
-    # (try_listen() catches UV_EADDRINUSE and increments). That works
-    # for the first kernel but degrades badly on a workstation that
-    # accumulates zombie IJulia processes — each kernel that crashes
-    # (force-kill, OOM, heartbeat timeout) leaves a Julia process alive
-    # holding its Bonito port. Bonito's own atexit-based cleanup only
-    # fires on graceful exit, so the next kernel has to walk the
-    # fallback ladder past every zombie, takes 4+ retries to bind, and
-    # in some failure modes ends up serving from a port the proxy
-    # mapping isn't aware of.
-    #
-    # We can't pass `listen_port=0` and let HTTP.listen! pick: Bonito's
-    # `try_listen` (Bonito/src/HTTPServer/implementation.jl:325-340)
-    # returns the literal port argument it was passed instead of
-    # reading the OS-assigned port back from the HTTP server, so port 0
-    # produces server.port = 0 and broken `/proxy/0/...` URLs. Instead
-    # we bind our own TCP listener on port 0, read the ephemeral port
-    # the OS handed us, close, and pass that fixed number to Bonito.
-    # The race window between our close() and Bonito's HTTP.listen! is
-    # tiny on macOS/Linux; if another process does snatch it, Bonito's
-    # try_listen fallback picks the next free port — exactly what it
-    # was designed for.
-    Bonito.configure_server!(listen_port = _pick_ephemeral_port())
+    # Ask the OS for a fresh ephemeral port for this kernel. Bonito's
+    # default is a fixed 9384 with sequential fallback (try_listen()
+    # catches UV_EADDRINUSE and increments). That works for the first
+    # kernel but degrades badly on a workstation that accumulates
+    # zombie IJulia processes — each kernel that crashes (force-kill,
+    # OOM, heartbeat timeout) leaves a Julia process alive holding its
+    # Bonito port, and the next kernel has to walk the fallback ladder
+    # past every zombie. `listen_port = 0` lets HTTP.listen! bind an
+    # OS-assigned port directly (requires Bonito >= 5; older try_listen
+    # returned the literal 0 and emitted dead `:0` URLs, which is why
+    # this used to be a pre-bind-and-close Sockets dance).
+    Bonito.configure_server!(listen_port = 0)
 
     # Asset serving: leave Bonito on its IJulia default, `NoServer`.
     # NoServer inlines every asset into the cell HTML. That's exactly
@@ -126,8 +113,10 @@ function __init__()
     # those are fetched by URL/processed via a path JupyterLab's output
     # renderer doesn't drive to completion, the session WebSocket never
     # opens, and `notify()` from the sliders/menu reaches nothing — a
-    # dead UI. (Two distinct upstream Bonito bugs underlie this; see the
-    # project's upstream-PR notes.)
+    # dead UI. (Two upstream Bonito bugs underlay this; 5.0 fixed the
+    # missing `Websocket` module load, but the session-bootstrap script
+    # still isn't executed by JupyterLab's output renderer under
+    # HTTPAssetServer — see the project's upstream-PR notes.)
     #
     # NoServer's only downside is that it would base64-inline our ~7 MB
     # JS bundle into the first scene cell (~12.5 MB of notebook output →
@@ -136,13 +125,6 @@ function __init__()
     # it by URL; everything else stays inlined. See `_visualize()` in
     # core/visualize.jl. Net: first scene cell ~280 KB, back-channel
     # alive.
-end
-
-function _pick_ephemeral_port()
-    sock = Sockets.listen(Sockets.ip"127.0.0.1", 0)
-    port = Int(Sockets.getsockname(sock)[2])
-    close(sock)
-    return port
 end
 
 end # module BiochemicalVisualization

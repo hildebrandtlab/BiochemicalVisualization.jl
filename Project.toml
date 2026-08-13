@@ -1,7 +1,7 @@
 name = "BiochemicalVisualization"
 uuid = "00dfb448-20af-4b14-a659-f3892fa4f701"
 authors = ["Andreas Hildebrandt <andreas.hildebrandt@uni-mainz.de> and contributors"]
-version = "0.3.1"
+version = "0.4.0"
 
 [deps]
 BiochemicalAlgorithms = "9d651bdf-8945-47d1-9188-34e269d8f7b5"
@@ -10,24 +10,22 @@ Colors = "5ae59095-9a9b-59fe-a467-6f913c188581"
 GeometryBasics = "5c1252a2-5f33-56bf-86c9-59e7332b4326"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 MsgPack = "99f44e22-a591-53d1-9472-aa23ef4bd671"
-Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
 [compat]
 Aqua = "0.8.14"
-BiochemicalAlgorithms = "0.4.1, 0.5, 0.6, 0.7"
-Bonito = "3.2, 4"
+BiochemicalAlgorithms = "0.4.1, 0.5, 0.6"
+Bonito = "5"
 Colors = "0.12, 0.13"
 GeometryBasics = "0.4, 0.5"
 LinearAlgebra = "1.10"
 MsgPack = "1.2"
-Sockets = "1.10"
 StaticArrays = "1.9"
 Statistics = "1.10"
 Test = "1.10"
 TestItemRunner = "1"
-julia = "1.10"
+julia = "1.11"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
