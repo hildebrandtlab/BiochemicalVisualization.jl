@@ -309,7 +309,18 @@ function _build_scene_app(scene::Scene)
 
     style_str = scene.style
     width     = scene.width
-    height    = scene.height
+    # A percentage height cannot work inside a notebook cell: percentages
+    # need a definite-height ancestor, and the output area has none. We
+    # used to fake one by forcing `$dom.parentNode` to 100vh from JS, but
+    # on Bonito >= 5 the sub-session fragment wrappers are
+    # `display:contents` (no box), so the forced height evaporated and
+    # every scene after the first collapsed to the HUD strip. Convert
+    # "N%" to "Nvh" instead — same visual meaning as the old
+    # N%-of-100vh, resolved by the viewport with no ancestor dependency.
+    # Explicit units (px, vh, em, ...) pass through untouched; width
+    # percentages resolve against the output area's width, which is
+    # always definite, so width needs no conversion.
+    height = endswith(scene.height, "%") ? chop(scene.height) * "vh" : scene.height
     dom = DOM.div(;style="width: $width; height: $height;")
 
     # JS↔Julia channels. Each request payload may include a `rep`
@@ -443,13 +454,10 @@ function _build_scene_app(scene::Scene)
         Bonito.onload(session, dom, js"""
             function (container){
                 $(visualize_asset).then(VISUALIZE => {
-                    parent = $dom.parentNode;
-                    parent.style.height = '100vh';
-
                     const sceneEl = document.createElement("bv-scene");
                     sceneEl.setAttribute("id", $scene_id);
-                    sceneEl.setAttribute("width", $width);
-                    sceneEl.setAttribute("height", $height);
+                    sceneEl.setAttribute("width", "100%");
+                    sceneEl.setAttribute("height", "100%");
 
                     const modelReq      = $(model_request);
                     const coloringReq   = $(coloring_request);

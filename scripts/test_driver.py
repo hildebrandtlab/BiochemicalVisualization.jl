@@ -398,6 +398,21 @@ async def run_main(args) -> int:
                           .map(d => d.id)
             """)
             log(f"  → scene_div ids: {div_ids}")
+            # Every scene must have real rendered size. A functional
+            # round-trip can succeed inside a visually collapsed scene
+            # (e.g. when a percentage height finds no sized ancestor —
+            # the Bonito 5 display:contents wrappers regression), so
+            # check the layout box explicitly.
+            sizes = await page.evaluate("""
+                () => Array.from(document.querySelectorAll('bv-scene')).map(el => {
+                    const r = el.getBoundingClientRect();
+                    return {id: el.id, w: Math.round(r.width), h: Math.round(r.height)};
+                })
+            """)
+            log(f"  → scene sizes: {sizes}")
+            too_small = [s for s in sizes if s["h"] < 150 or s["w"] < 150]
+            if too_small:
+                failures.append(f"scene(s) rendered too small (<150px): {too_small}")
             # Sequence: scene 2, scene 1, scene 2 again, scene 1 again.
             # If only the FIRST dispatch in the sequence is delivered, then
             # "second dispatch onwards silently blocked" is the bug shape.

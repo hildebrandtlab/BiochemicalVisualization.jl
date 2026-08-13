@@ -186,6 +186,12 @@ notebook cell displays it just like the legacy convenience functions.
 `active` is a 1-based index into `representations` (or 0 when the scene
 is empty) indicating which rep the Model / Color / Density menus drive.
 Defaults to the most recently added rep.
+
+`width` and `height` accept CSS lengths (`"500px"`, `"60vh"`, ...). A
+percentage *height* is interpreted relative to the browser viewport
+(`"60%"` ≡ `"60vh"`): notebook output cells have no fixed-height parent
+for a CSS percentage to resolve against. A percentage width resolves
+against the output area's width as usual.
 """
 mutable struct Scene
     representations::Vector{DisplayedRepresentation}
