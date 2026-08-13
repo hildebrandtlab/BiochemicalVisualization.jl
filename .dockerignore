@@ -1,6 +1,7 @@
 # Keep the build context small — the Dockerfile COPYs only Project.toml,
 # src, assets, typescript/dist, and deploy/notebooks.
 .git
+.claude
 **/node_modules
 tmp
 PfannesMaster
