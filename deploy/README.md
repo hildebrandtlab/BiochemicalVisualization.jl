@@ -35,6 +35,12 @@ Open `example.ipynb` and run the cells.
 > `BCV_PORT=9999 docker compose up` (then browse to `:9999`). You can also
 > put `BCV_PORT=9999` into an `.env` file next to `docker-compose.yml`.
 
+> Change the bind address: by default the port is published on **all**
+> interfaces (`0.0.0.0`, needed for direct LAN access). Set
+> `BCV_BIND=127.0.0.1` to bind only to loopback — required when a proxy
+> on the same host terminates external traffic on the same port (see the
+> Tailscale note below).
+
 ## Reaching it from an iPhone
 
 The phone is a *remote* browser, so it must reach the host and use proxy
@@ -55,6 +61,21 @@ network (and the host firewall allowing the port).
 
 - **Tailscale** (nicest): install on host and phone, browse to the host's
   tailnet IP — `http://100.x.y.z:8888/lab?token=…`.
+
+  If you use **`tailscale serve`** to front the port instead (e.g.
+  `tailscale serve --http 28888 http://localhost:28888`), docker and
+  tailscale would otherwise fight over the same port: publish the
+  container on loopback only, and let serve own the external side. Put
+  this in `.env` next to `docker-compose.yml`:
+
+  ```
+  BCV_BIND=127.0.0.1
+  BCV_PORT=28888
+  ```
+
+  Symptom of getting this wrong: an instant **502** when opening the
+  page through the tailnet (serve can't reach — or loses the port to —
+  its upstream).
 - **cloudflared / ngrok**: `cloudflared tunnel --url http://localhost:8888`
   gives an HTTPS URL. Proxy mode uses page‑relative URLs, so the WebSocket
   upgrades to `wss://` automatically over HTTPS — no extra config.
