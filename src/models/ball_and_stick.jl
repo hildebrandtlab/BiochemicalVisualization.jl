@@ -18,9 +18,12 @@ function prepare_ball_and_stick_model(
     sphere_colors_qutemol = [element_color_qutemol(e) for e in atoms(ac).element]
     meta_data = [_atom_metadata(at) for at in atoms(ac)]
 
-    # Resolve through `parent(ac)` so bond endpoints survive when `ac` is
-    # a subset (chain/fragment) rather than the whole System.
-    sticks = [(atom_by_idx(parent(ac), b.a1), atom_by_idx(parent(ac), b.a2)) for b in bonds(ac)]
+    # `get_partners` resolves through the bond's own system, so endpoints
+    # survive when `ac` is a subset (chain/fragment) rather than the whole
+    # System. It's also the only bond-endpoint accessor that's stable
+    # across BCA versions (the raw fields were renamed a1/a2 → atom1_idx/
+    # atom2_idx after v0.7.3).
+    sticks = [get_partners(b) for b in bonds(ac)]
     midpoints = map(s -> (s[1].r + s[2].r) / T(2), sticks)
 
     cylinders = collect(Iterators.flatten(map(((s, m),) -> (

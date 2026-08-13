@@ -11,7 +11,9 @@
         frag = Fragment(chain, 1)
         a1 = Atom(frag, 1, Elements.C; name = "C", r = zero(Vector3{T}))
         a2 = Atom(frag, 2, Elements.O; name = "O", r = ones(Vector3{T}))
-        Bond(sys, a1.idx, a2.idx, BondOrder.Single)
+        # Atom-based constructor — the (sys, idx, idx, order) variant was
+        # dropped from BCA after v0.7.3; this one exists in all versions.
+        Bond(a1, a2, BondOrder.Single)
         sys
     end
 
