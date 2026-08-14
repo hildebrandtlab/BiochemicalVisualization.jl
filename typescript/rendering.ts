@@ -35,34 +35,25 @@ const renderScene = (ctx: AppContext, reps: any[]) => {
         // live on the StandardMaterials, so we just walk the freshly
         // added slice of ctx.representationMaterials.
         //
-        // Transparency for instanced geometry (ball-and-stick spheres,
-        // backbone surface tubes) is tricky because Babylon doesn't
-        // depth-sort instances or self-overlapping triangles. Two
-        // mitigations together get rid of most of the visible
-        // artifacts:
-        //
-        //   - `needDepthPrePass`: render the depth buffer once first
-        //     with color disabled, then do the color pass with
-        //     blending. This stops the "ghost copies behind" effect
-        //     where back-facing instances bleed through the front
-        //     ones.
-        //
-        //   - `separateCullingPass`: render back faces then front
-        //     faces in two passes. Useful for the SAS/SES surface
-        //     meshes which have backFaceCulling=false (so both faces
-        //     are drawn anyway) — without this, the back-face
-        //     fragments composite into the alpha buffer in arbitrary
-        //     order. We enable it only when alpha<1 to keep the
-        //     opaque path cheap.
+        // Transparency is PLAIN alpha blending — deliberately no
+        // `needDepthPrePass` and no `separateCullingPass`. Both were
+        // used here once to reduce blend-order artifacts, but under
+        // Babylon 9.12 a material with needDepthPrePass renders its
+        // depth pre-pass and then every color-pass fragment FAILS the
+        // depth test against its own pre-pass depths — any alpha < 1
+        // made the whole rep vanish (bisected empirically: pre-pass
+        // alone → invisible; separateCullingPass alone → most
+        // fragments dropped; neither → correct blending). Unsorted
+        // self-overlap artifacts in dense scenes are the accepted
+        // trade-off; a translucent molecule you can see always beats
+        // an invisible one.
         const alpha      = typeof dr.alpha === "number" ? dr.alpha : 1;
         const wireframe  = dr.wireframe === true;
         const transparent = alpha < 1;
         for (let j = matStart; j < ctx.representationMaterials.length; j++) {
             const m = ctx.representationMaterials[j];
-            m.alpha               = alpha;
-            m.wireframe           = wireframe;
-            m.needDepthPrePass    = transparent;
-            m.separateCullingPass = transparent;
+            m.alpha     = alpha;
+            m.wireframe = wireframe;
             (m as any).transparencyMode = transparent ? 2 /* ALPHABLEND */ : 0 /* OPAQUE */;
         }
     });

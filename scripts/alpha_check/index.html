@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>alpha repro</title></head>
+<body style="margin:0;background:#222">
+<div id="host" style="width:420px;height:420px"></div>
+<script>
+  // Force preserveDrawingBuffer so readPixels outside the frame works.
+  const _gc = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (type, attrs) {
+    if (type === "webgl" || type === "webgl2") {
+      attrs = Object.assign({}, attrs, { preserveDrawingBuffer: true });
+    }
+    return _gc.call(this, type, attrs);
+  };
+</script>
+<script type="module">
+  import '/biochemicalvisualization.js';
+
+  // Synthetic SES-like rep: an octahedron surface mesh with vertex colors.
+  const P = [
+    1,0,0, -1,0,0, 0,1,0, 0,-1,0, 0,0,1, 0,0,-1,
+  ].map(v => v * 3);
+  const N = [
+    1,0,0, -1,0,0, 0,1,0, 0,-1,0, 0,0,1, 0,0,-1,
+  ];
+  const I = [
+    0,2,4, 2,1,4, 1,3,4, 3,0,4,
+    2,0,5, 1,2,5, 3,1,5, 0,3,5,
+  ];
+  const C = Array(6).fill("#ff4444");
+
+  const rep = (alpha) => ({
+    representations: [{
+      type: "SES", coloring: "element", density: "low",
+      visible: true, alpha: alpha, wireframe: false,
+      repr: {
+        primitives: {}, colors: {}, meta_data: [], flags: {},
+        mesh: { positions: P, normals: N, indices: I, vertex_colors: C },
+      },
+    }],
+    active: 1,
+  });
+
+  const el = document.createElement("bv-scene");
+  el.setAttribute("id", "t1");
+  el.setAttribute("width", "400px");
+  el.setAttribute("height", "400px");
+
+  window.__mounted = false;
+  el.addEventListener("bv-scene-mounted", () => { window.__mounted = true; });
+  document.getElementById("host").appendChild(el);
+
+  window.__send = (alpha, ssao) => {
+    const root = document.getElementById("t1-div");
+    root.dispatchEvent(new CustomEvent("set-render-mode",
+      { detail: { ssao_mode: ssao, debug: false, style: "default" } }));
+    root.dispatchEvent(new CustomEvent("set-focus", { detail: { focus_point: [0,0,0] } }));
+    root.dispatchEvent(new CustomEvent("add-representation", { detail: rep(alpha) }));
+  };
+</script>
+</body>
+</html>
