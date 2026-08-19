@@ -42,16 +42,21 @@ async def main():
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
-        page = await browser.new_page(viewport={"width": 500, "height": 500})
+        page = await browser.new_page(viewport={"width": 950, "height": 550})
         errors: list[str] = []
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
         await page.goto(f"http://127.0.0.1:{PORT}/index.html")
         await page.wait_for_function("() => window.__mounted", timeout=30_000)
 
+        shots = Path(sys.argv[2]) if len(sys.argv) > 2 else None
+
         async def measure(alpha: float, ssao: int) -> int:
             await page.evaluate(f"() => window.__send({alpha}, {ssao})")
             await asyncio.sleep(1.5)  # let a few frames render
+            if shots:
+                shots.mkdir(parents=True, exist_ok=True)
+                await page.screenshot(path=str(shots / f"alpha_{alpha}_ssao{ssao}.png"), clip={"x": 0, "y": 0, "width": 620, "height": 480})
             n = await page.evaluate("""
                 () => {
                     const c = document.querySelector('canvas');

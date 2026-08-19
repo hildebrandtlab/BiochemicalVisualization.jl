@@ -13,6 +13,10 @@ import { Vector3, Mesh, StandardMaterial, HighlightLayer, Color3, MeshBuilder, C
 const CLOSED_SURFACE_TYPES = new Set(["BACKBONE", "RIBBON", "CARTOON"]);
 
 const renderScene = (ctx: AppContext, reps: any[]) => {
+    // Whether ANY rep is translucent decides whether the scene may be
+    // frozen afterwards — see applyScene.
+    ctx.sceneHasTransparency =
+        reps.some((dr: any) => typeof dr.alpha === "number" && dr.alpha < 1);
     // Snapshot the material pool size BEFORE building each rep so we
     // can apply per-rep alpha/wireframe to exactly the materials this
     // rep just added (and no others).
@@ -35,25 +39,28 @@ const renderScene = (ctx: AppContext, reps: any[]) => {
         // live on the StandardMaterials, so we just walk the freshly
         // added slice of ctx.representationMaterials.
         //
-        // Transparency is PLAIN alpha blending — deliberately no
-        // `needDepthPrePass` and no `separateCullingPass`. Both were
-        // used here once to reduce blend-order artifacts, but under
-        // Babylon 9.12 a material with needDepthPrePass renders its
-        // depth pre-pass and then every color-pass fragment FAILS the
-        // depth test against its own pre-pass depths — any alpha < 1
-        // made the whole rep vanish (bisected empirically: pre-pass
-        // alone → invisible; separateCullingPass alone → most
-        // fragments dropped; neither → correct blending). Unsorted
-        // self-overlap artifacts in dense scenes are the accepted
-        // trade-off; a translucent molecule you can see always beats
-        // an invisible one.
+        // Transparency = alpha blend + `needDepthPrePass` (single-layer
+        // transparency, like BALLView/PyMOL): the pre-pass writes the
+        // rep's depths, the color pass then blends only the FRONT-most
+        // layer. Without it, Babylon can't order instanced spheres or a
+        // surface's own triangles and molecules turn into patchy
+        // unsorted-blend noise. No `separateCullingPass` — the pre-pass
+        // makes it redundant, and alone it drops most fragments.
+        //
+        // CAUTION: needDepthPrePass sets checkReadyOnEveryCall on the
+        // material, which is incompatible with frozen active meshes —
+        // a frozen scene silently stops drawing the mesh (this is
+        // exactly how the "any alpha < 1 vanishes" bug happened).
+        // renderScene records sceneHasTransparency above; applyScene /
+        // setHAtomsVisible only freeze when it's false.
         const alpha      = typeof dr.alpha === "number" ? dr.alpha : 1;
         const wireframe  = dr.wireframe === true;
         const transparent = alpha < 1;
         for (let j = matStart; j < ctx.representationMaterials.length; j++) {
             const m = ctx.representationMaterials[j];
-            m.alpha     = alpha;
-            m.wireframe = wireframe;
+            m.alpha            = alpha;
+            m.wireframe        = wireframe;
+            m.needDepthPrePass = transparent;
             (m as any).transparencyMode = transparent ? 2 /* ALPHABLEND */ : 0 /* OPAQUE */;
         }
     });

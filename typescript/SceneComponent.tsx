@@ -101,6 +101,10 @@ export type AppContext = {
 
   pointerMoved: boolean,
   hAtomsVisible: boolean,
+  // True while any rep renders with alpha < 1. Transparent materials
+  // use needDepthPrePass (→ checkReadyOnEveryCall), which a frozen
+  // scene silently stops drawing — so freezing is skipped while set.
+  sceneHasTransparency: boolean,
   debug: boolean,
   renderStyle: RenderStyle,
   activeModel: ModelType,
@@ -319,7 +323,8 @@ const setupControls = (
           mesh.isVisible = on;
         }
       }
-      ctx.scene.freezeActiveMeshes();
+      // See applyScene: freezing kills needDepthPrePass materials.
+      if (!ctx.sceneHasTransparency) ctx.scene.freezeActiveMeshes();
     },
 
     setSSAOMode: (mode) => {
@@ -410,12 +415,20 @@ const clearRepresentation = (ctx: AppContext) => {
 // Tear down every previously rendered representation and build the
 // freshly-shipped list. Used by the initial add-representation event
 // and by every Julia → JS scene rebuild.
+//
+// Freezing the active-mesh list is a big win for large molecules, but
+// it is incompatible with the transparent path: needDepthPrePass sets
+// checkReadyOnEveryCall on the material, and a frozen scene silently
+// stops drawing such meshes (empirically: freeze on → any alpha < 1
+// vanishes; freeze off → renders correctly). So the scene stays
+// unfrozen exactly while a translucent rep exists.
 const applyScene = (ctx: AppContext, reps: any[]) => {
+  ctx.scene.unfreezeActiveMeshes();
   clearRepresentation(ctx);
   renderScene(ctx, reps);
   applyRenderStyle(ctx, ctx.renderStyle);
   ctx.scene.createOrUpdateSelectionOctree();
-  ctx.scene.freezeActiveMeshes();
+  if (!ctx.sceneHasTransparency) ctx.scene.freezeActiveMeshes();
 };
 
 const setupPicking = (
@@ -699,6 +712,7 @@ export const SceneComponent = (props: SceneComponentProps) => {
       ssaoCache: {},         // pipelines created on first use, never disposed
       pointerMoved: false,
       hAtomsVisible: true,
+      sceneHasTransparency: false,
       debug: false,
       renderStyle: "default",
       activeModel: "BALL_AND_STICK",

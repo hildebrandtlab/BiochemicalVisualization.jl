@@ -2,7 +2,7 @@
 <html>
 <head><meta charset="utf-8"><title>alpha repro</title></head>
 <body style="margin:0;background:#222">
-<div id="host" style="width:420px;height:420px"></div>
+<div id="host" style="width:900px;height:480px"></div>
 <script>
   // Force preserveDrawingBuffer so readPixels outside the frame works.
   const _gc = HTMLCanvasElement.prototype.getContext;
@@ -29,22 +29,43 @@
   ];
   const C = Array(6).fill("#ff4444");
 
+  // Molecule-like scene: a few opaque "atoms" (instanced spheres)
+  // INSIDE the translucent surface, so blend-order artifacts (interior
+  // invisible, patchy self-overlap) are visible, not just pixel counts.
+  const spheres = [
+    { center: [0, 0, 0],       r: 0.8 },
+    { center: [1.2, 0.4, 0],   r: 0.6 },
+    { center: [-1.0, -0.5, 0.4], r: 0.6 },
+  ];
   const rep = (alpha) => ({
-    representations: [{
-      type: "SES", coloring: "element", density: "low",
-      visible: true, alpha: alpha, wireframe: false,
-      repr: {
-        primitives: {}, colors: {}, meta_data: [], flags: {},
-        mesh: { positions: P, normals: N, indices: I, vertex_colors: C },
+    representations: [
+      {
+        type: "BALL_AND_STICK", coloring: "element", density: "low",
+        visible: true, alpha: 1, wireframe: false,
+        repr: {
+          primitives: { spheres },
+          colors: { sphere_colors: ["#44ff44", "#4444ff", "#ffff44"] },
+          meta_data: [["C","C",1,"A",1], ["N","N",2,"A",1], ["O","O",3,"A",1]],
+          flags: {},
+          mesh: null,
+        },
       },
-    }],
-    active: 1,
+      {
+        type: "SES", coloring: "element", density: "low",
+        visible: true, alpha: alpha, wireframe: false,
+        repr: {
+          primitives: {}, colors: {}, meta_data: [], flags: {},
+          mesh: { positions: P, normals: N, indices: I, vertex_colors: C },
+        },
+      },
+    ],
+    active: 2,
   });
 
   const el = document.createElement("bv-scene");
   el.setAttribute("id", "t1");
-  el.setAttribute("width", "400px");
-  el.setAttribute("height", "400px");
+  el.setAttribute("width", "880px");
+  el.setAttribute("height", "460px");
 
   window.__mounted = false;
   el.addEventListener("bv-scene-mounted", () => { window.__mounted = true; });
