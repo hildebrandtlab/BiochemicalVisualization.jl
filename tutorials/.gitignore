@@ -1,2 +1,7 @@
 /.quarto/
 /_freeze/
+
+**/*.quarto_ipynb
+
+# Quarto renders the .qmd into a .ipynb sidecar — generated, not tracked.
+/getting_started.ipynb

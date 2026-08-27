@@ -1,0 +1,4 @@
+[deps]
+BiochemicalAlgorithms = "9d651bdf-8945-47d1-9188-34e269d8f7b5"
+BiochemicalVisualization = "00dfb448-20af-4b14-a659-f3892fa4f701"
+Bonito = "824d6782-a2ef-11e9-3a09-e5662e0c26f8"
