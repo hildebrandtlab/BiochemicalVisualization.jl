@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en" id="html">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Title changed: Molecule Visualizer -> BiochemicalAlgorithms View, Mateusz Ciesielski -->
+    <title>BiochemicalAlgorithms View</title>
+    <!-- End change, Mateusz Ciesielski -->
+    <link href="./css/style.css" rel="stylesheet">
+    <!-- Import maps polyfill -->
+    <!-- Remove this when import maps will be widely supported -->
+    <script async src="https://unpkg.com/es-module-shims@1.5.17/dist/es-module-shims.js"></script>
+
+    <!-- "node-pty" added to importmap, Mateusz Ciesielski -->
+    <script type="importmap">
+              {
+                  "imports": {
+                      "three": "https://unpkg.com/three@0.144.0/build/three.module.js",
+                      "pdbloader": "https://unpkg.com/three@0.144.0/examples/jsm/loaders/PDBLoader.js",
+                      "stats": "https://unpkg.com/three@0.144.0/examples/jsm/libs/stats.module.js",
+                      "trackballcontrols": "https://unpkg.com/three@0.144.0/examples/jsm/controls/TrackballControls.js",
+                      "lil_gui": "https://unpkg.com/three@0.144.0/examples/jsm/libs/lil-gui.module.min.js",
+                      "stlloader": "https://unpkg.com/three@0.144.0/examples/jsm/loaders/STLLoader.js",
+                      "vr_button": "https://unpkg.com/three@0.144.0/examples/jsm/webxr/VRButton.js",
+                      "html_mesh": "https://unpkg.com/three@0.144.0/examples/jsm/interactive/HTMLMesh.js",
+                      "interactive_group": "https://unpkg.com/three@0.144.0/examples/jsm/interactive/InteractiveGroup.js",
+                      "xr_controller_model_factory": "https://unpkg.com/three@0.144.0/examples/jsm/webxr/XRControllerModelFactory.js",
+                      "three-mesh-ui": "https://unpkg.com/three-mesh-ui@6.4.4/build/three-mesh-ui.module.js",
+                      "objloader": "https://unpkg.com/three@0.143.0/examples/jsm/loaders/OBJLoader.js",
+
+                      "node-pty": "https://unpkg.com/node-pty@0.10.1/lib/index.js"
+                  }
+              }
+    </script>
+
+    <script type="module" src="js/main.js"></script>
+
+    <!-- Addition, Mateusz Ciesielski -->
+    <script type="module">
+        import { dispatchLoadFile, dispatchRerender, dispatchResetViewer, dispatchResetCamera, dispatchLoadPDB, visualizer } from "../../../../src/js/JuliaDispatcher.js"
+
+        window.dispatchLoadFile = dispatchLoadFile;
+        window.dispatchRerender = dispatchRerender;
+        window.dispatchResetViewer = dispatchResetViewer;
+        window.dispatchResetCamera = dispatchResetCamera;
+        window.dispatchLoadPDB = dispatchLoadPDB;
+
+        window.visualizer = visualizer;
+    </script>
+    <link rel="Stylesheet" href="./node_modules/xterm/css/xterm.css" />
+    <!-- End Addition, Mateusz Ciesielski -->
+
+  </head>
+  <body>
+    <canvas id="container"></canvas>
+    <div class="modal" id="modal">
+      <div class="modal-header">
+        <div class="title"></div>
+        <button data-close-button class="close-button">&times;</button>
+      </div>
+      <div class="modal-body">
+        <table data-table-description class="description">
+          <thead data-table-header></thead>
+          <tbody data-table-body class="description-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="overlay"></div>
+
+    <!-- Addition, Mateusz Ciesielski -->
+    <script type="text/javascript">
+      try {
+        // Receive data from Electron main process and forward it to Julia.
+        const { ipcRenderer } = require("electron");
+        ipcRenderer.on("toJulia", function (event, data) {
+          sendMessageToJulia(data);
+      });
+      } catch (error) {
+          // Do not import ipcRenderer if already imported.
+          ipcRenderer.on("toJulia", function (event, data) {
+            sendMessageToJulia(data);
+        });
+      }
+    </script>
+
+    <div id="xterm"></div>
+    <script src="../../../../src/js/Terminal.js"></script>   <!-- Include this script if trying shell integration (WIP) -->
+    <!-- End Addition, Mateusz Ciesielski -->
+
+  </body>
+</html>
