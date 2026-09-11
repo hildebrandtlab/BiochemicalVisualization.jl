@@ -1,5 +1,23 @@
 # Contributing Guidelines
 
+## Building the documentation locally
+
+The documentation has its own Julia environment in [`docs/`](docs/Project.toml) that
+includes Documenter; the package's own `Project.toml` deliberately does not. Run
+`make.jl` against that environment, not the default project:
+
+```sh
+# one-time: path-dev the package into the docs environment
+julia --project=docs -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
+
+# build the docs (output lands in docs/build/)
+julia --project=docs docs/make.jl
+```
+
+Re-run the bootstrap line only after a clean clone or after editing
+`docs/Project.toml`. The deployment step at the end of `make.jl` is a no-op outside
+of CI, so local builds will print "Skipping deployment" — that is expected.
+
 ## Certificate of Origin
 
 Source: [Developer Certificate of Origin](https://developercertificate.org/)

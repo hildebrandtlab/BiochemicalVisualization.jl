@@ -1,0 +1,35 @@
+# Interactive BiochemicalVisualization viewer over JupyterLab.
+#
+#   docker compose up --build        # first run builds the image (slow: Julia precompile)
+#   open http://<this-host>:8888/lab?token=<JUPYTER_TOKEN>
+#
+# The published host port defaults to 8888; override it via BCV_PORT,
+# e.g.  BCV_PORT=9999 docker compose up   (then open http://<this-host>:9999).
+#
+# BCV_BIND controls which host address the port binds to (default
+# 0.0.0.0 = all interfaces, needed for direct LAN access). Set
+# BCV_BIND=127.0.0.1 when something else terminates external traffic
+# on the same port — e.g. `tailscale serve` proxying to
+# http://localhost:<port> — so docker doesn't fight it for the
+# non-loopback interfaces.
+#
+# From an iPhone/other device: use the host's LAN IP instead of localhost,
+# e.g. http://192.168.1.42:8888/lab?token=change-me   (see deploy/README.md).
+services:
+  viewer:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "${BCV_BIND:-0.0.0.0}:${BCV_PORT:-8888}:8888"
+    environment:
+      # Emit proxy-relative Bonito URLs so the viewer works from a remote
+      # browser (not just localhost). Required for phone access.
+      BCV_JUPYTER_PROXY: "1"
+      # Fixed access token so the URL is stable. CHANGE THIS.
+      JUPYTER_TOKEN: "change-me"
+    volumes:
+      # Persist / edit notebooks on the host. Comment out to keep them
+      # inside the container only.
+      - ./deploy/notebooks:/work
+    restart: unless-stopped

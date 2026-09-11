@@ -1,0 +1,12 @@
+[project]
+name = "biochemicalvisualization-jl"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "jupyter-server-proxy>=4.5.0",
+    "jupyterlab>=4.5.7",
+    "notebook>=7.5.6",
+    "playwright>=1.60.0",
+]
